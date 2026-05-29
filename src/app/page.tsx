@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Presentation, Type, Table as TableIcon, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { addFileHistory } from '@/lib/pptx-history';
-import { AIGenerateDialog } from '@/components/ai-generate-dialog';
+import { AiGenerateDialog } from '@/components/ai-generate-dialog';
 
 export default function Home() {
   const {
@@ -99,7 +99,7 @@ export default function Home() {
             PPTX 模板编辑器 · 上传 → 编辑 → 导出 · 保持原有排版格式
           </div>
         </footer>
-        <AIGenerateDialog open={aiDialogOpen} onOpenChange={setAiDialogOpen} />
+        <AiGenerateDialog open={aiDialogOpen} onOpenChange={setAiDialogOpen} />
       </div>
     );
   }
@@ -226,7 +226,7 @@ export default function Home() {
         </div>
       </footer>
 
-      <AIGenerateDialog open={aiDialogOpen} onOpenChange={setAiDialogOpen} />
+      <AiGenerateDialog open={aiDialogOpen} onOpenChange={setAiDialogOpen} />
     </div>
   );
 }
