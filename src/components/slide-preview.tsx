@@ -120,7 +120,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
                   <img
                     src={replacementThumbnail}
                     alt="Replaced"
-                    className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none"
+                    className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none"
                   />
                 )}
                 {isSelected && heightPct > 3 && widthPct > 5 && (

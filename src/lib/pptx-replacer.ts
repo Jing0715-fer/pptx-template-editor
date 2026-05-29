@@ -583,6 +583,34 @@ function sanitizeContentTypesXml(xml: string): string {
     ''
   );
 
+  // 6. Remove <Override> entries for WPS tag files (ppt/tags/tag*.xml)
+  // These are non-standard and reference files that don't exist in the ZIP.
+  // Windows Office strict OPC parser rejects the package when it encounters
+  // Override entries for Parts that don't exist in the archive.
+  // WPS typically creates 81 of these: tag1.xml through tag81.xml
+  result = result.replace(
+    /<Override\s+PartName="\/ppt\/tags\/tag\d+\.xml"\s+ContentType="[^"]*"[^/]*\/?>/g,
+    ''
+  );
+  // Also handle attribute order variation: ContentType before PartName
+  result = result.replace(
+    /<Override\s+ContentType="[^"]*"\s+PartName="\/ppt\/tags\/tag\d+\.xml"[^/]*\/?>/g,
+    ''
+  );
+
+  // 7. Remove any <Override> entries for ppt/tags/ directory itself
+  result = result.replace(
+    /<Override\s+PartName="\/ppt\/tags[^"]*"\s+ContentType="[^"]*"[^/]*\/?>/g,
+    ''
+  );
+  result = result.replace(
+    /<Override\s+ContentType="[^"]*"\s+PartName="\/ppt\/tags[^"]*"[^/]*\/?>/g,
+    ''
+  );
+
+  // 8. Clean up any blank lines left by removed entries
+  result = result.replace(/\n\s*\n/g, '\n');
+
   return result;
 }
 
@@ -599,9 +627,6 @@ function removeWpsSpecificFiles(zip: JSZip): void {
     if (filePath.startsWith('ppt/tags/')) {
       entriesToRemove.push(filePath);
     }
-    // Remove WPS-specific custom property entries in docProps
-    // These are often referenced but not needed by standard Office
-    // Note: We don't remove docProps/core.xml or docProps/app.xml as they're standard
   }
 
   for (const entry of entriesToRemove) {
@@ -610,6 +635,71 @@ function removeWpsSpecificFiles(zip: JSZip): void {
 
   if (entriesToRemove.length > 0) {
     console.log(`Removed ${entriesToRemove.length} WPS-specific files`);
+  }
+}
+
+/**
+ * Removes references to WPS tag files (../tags/tag*.xml) from ALL .rels files.
+ *
+ * CRITICAL for Windows Office compatibility:
+ * WPS-created PPTX files declare relationships to ppt/tags/tag*.xml in their
+ * .rels files (slideLayout, slideMaster, slide, etc.), but the tag files often
+ * don't exist in the ZIP archive. Windows Office's strict OPC parser validates
+ * every relationship target exists — if a referenced Part is missing, the entire
+ * package is rejected. macOS Office is more lenient and silently ignores missing Parts.
+ *
+ * This function iterates ALL .rels files in the ZIP and removes <Relationship>
+ * elements whose Target references ../tags/tag*.xml.
+ */
+async function removeTagReferencesFromRels(zip: JSZip, modifiedFiles?: Set<string>): Promise<void> {
+  let totalRemoved = 0;
+
+  for (const [filePath, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    // Process ALL .rels files in the entire ZIP
+    if (!filePath.endsWith('.rels')) continue;
+
+    try {
+      const rawData = Buffer.from(await file.async('uint8array'));
+      const bomPresent = hasUtf8Bom(rawData);
+      let relsXml = bufferToString(rawData);
+
+      // Check if this .rels file contains any tag references
+      if (!relsXml.includes('tags/tag')) continue;
+
+      // Remove <Relationship> elements referencing ../tags/tag*.xml
+      // Pattern matches various attribute orders and whitespace
+      const before = relsXml;
+
+      // Handle: <Relationship Id="rId3" Type="..." Target="../tags/tag1.xml"/>
+      relsXml = relsXml.replace(
+        /<Relationship\s[^>]*Target="[^"]*tags\/tag\d+\.xml"[^>]*\/?>/g,
+        ''
+      );
+
+      // Handle: Target before other attributes (less common but valid XML)
+      // Actually the above regex already covers this since [^>]* matches any attributes before Target
+      // and [^>]* matches any attributes after Target, as long as Target contains tags/tagN.xml
+
+      // Clean up blank lines left by removed entries
+      relsXml = relsXml.replace(/\n\s*\n/g, '\n');
+
+      if (relsXml !== before) {
+        const outputData = stringToBuffer(relsXml, bomPresent);
+        zip.file(filePath, outputData, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        if (modifiedFiles) modifiedFiles.add(filePath);
+        const removedCount = (before.match(/tags\/tag\d+\.xml/g) || []).length -
+                            (relsXml.match(/tags\/tag\d+\.xml/g) || []).length;
+        totalRemoved += removedCount;
+        console.log(`Cleaned ${removedCount} tag references from ${filePath}`);
+      }
+    } catch {
+      // Skip files that can't be processed
+    }
+  }
+
+  if (totalRemoved > 0) {
+    console.log(`Total: removed ${totalRemoved} WPS tag references from .rels files`);
   }
 }
 
@@ -722,6 +812,12 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
       if (invalidMimeMatch) {
         return { valid: false, details: `[Content_Types].xml contains invalid MIME type: ${invalidMimeMatch[0]} (extra dot before extension)` };
       }
+
+      // Check for WPS tag Override entries that reference non-existent files
+      const tagOverrideMatch = ctData.match(/PartName="\/ppt\/tags\/tag\d+\.xml"/);
+      if (tagOverrideMatch) {
+        return { valid: false, details: `[Content_Types].xml contains WPS tag Override for non-existent file: ${tagOverrideMatch[0]}` };
+      }
     } catch {
       return { valid: false, details: 'Failed to read [Content_Types].xml' };
     }
@@ -741,6 +837,22 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
     }
     if (invalidSlides > 0) {
       return { valid: false, details: `${invalidSlides} slides have invalid XML` };
+    }
+
+    // Check for dangling .rels references to WPS tag files
+    let danglingRelsCount = 0;
+    for (const [filePath, file] of Object.entries(zip.files)) {
+      if (file.dir || !filePath.endsWith('.rels')) continue;
+      try {
+        const relsData = await file.async('string');
+        if (relsData.includes('tags/tag')) {
+          const tagRefs = relsData.match(/Target="[^"]*tags\/tag\d+\.xml"/g);
+          if (tagRefs) danglingRelsCount += tagRefs.length;
+        }
+      } catch { /* skip */ }
+    }
+    if (danglingRelsCount > 0) {
+      return { valid: false, details: `Found ${danglingRelsCount} dangling .rels references to non-existent WPS tag files` };
     }
 
     return {
@@ -992,6 +1104,14 @@ export async function applyModificationsAndExport(
   // Step 4: Remove WPS-specific files that may cause Windows Office issues
   // WPS adds non-standard files like ppt/tags/tag*.xml
   removeWpsSpecificFiles(zip);
+
+  // Step 4b: Remove WPS tag references from ALL .rels files
+  // CRITICAL: Even after removing the tag XML files from the ZIP, the .rels files
+  // still contain <Relationship> entries pointing to ../tags/tag*.xml. Windows
+  // Office's strict OPC parser validates every relationship target — if a target
+  // Part doesn't exist, the entire package is rejected. This step removes those
+  // dangling references so the .rels files are consistent with the ZIP contents.
+  await removeTagReferencesFromRels(zip, modifiedFiles);
 
   // Step 5: Sanitize WPS-specific XML attributes from presentation files
   await sanitizeWpsXmlAttributes(zip);

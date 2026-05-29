@@ -194,6 +194,69 @@ function extractPositionFromSpPr(spPrChildren: Children | null): ElementPosition
   };
 }
 
+/**
+ * Extracts the group shape's coordinate transformation parameters.
+ *
+ * In PPTX, a group shape (<p:grpSp>) has two coordinate systems:
+ * - Slide coordinates: defined by a:off and a:ext in the group's a:xfrm
+ * - Child coordinates: defined by a:chOff and a:chExt in the group's a:xfrm
+ *
+ * Child elements inside the group have positions in child coordinates.
+ * To convert to absolute slide coordinates:
+ *   absoluteX = groupOff.x + (childX - chOff.x) * (ext.cx / chExt.cx)
+ *   absoluteY = groupOff.y + (childY - chOff.y) * (ext.cy / chExt.cy)
+ */
+interface GroupTransform {
+  offX: number; offY: number;       // Group offset in slide coordinates (a:off)
+  extCx: number; extCy: number;     // Group extent in slide coordinates (a:ext)
+  chOffX: number; chOffY: number;   // Child offset (a:chOff) — origin of child coord system
+  chExtCx: number; chExtCy: number; // Child extent (a:chExt) — size in child coord system
+}
+
+function extractGroupTransform(grpSpPrChildren: Children | null): GroupTransform | null {
+  if (!grpSpPrChildren) return null;
+
+  const xfrm = findChild(grpSpPrChildren, 'a:xfrm');
+  if (!xfrm) return null;
+
+  const offAttrs = findChildAttrs(xfrm, 'a:off');
+  const extAttrs = findChildAttrs(xfrm, 'a:ext');
+  const chOffAttrs = findChildAttrs(xfrm, 'a:chOff');
+  const chExtAttrs = findChildAttrs(xfrm, 'a:chExt');
+
+  const offX = parseInt(offAttrs['@_x'] || offAttrs['x'] || '0', 10);
+  const offY = parseInt(offAttrs['@_y'] || offAttrs['y'] || '0', 10);
+  const extCx = parseInt(extAttrs['@_cx'] || extAttrs['cx'] || '0', 10);
+  const extCy = parseInt(extAttrs['@_cy'] || extAttrs['cy'] || '0', 10);
+
+  // a:chOff and a:chExt default to a:off and a:ext if not specified
+  const chOffX = chOffAttrs['@_x'] ? parseInt(chOffAttrs['@_x'], 10) : offX;
+  const chOffY = chOffAttrs['@_y'] ? parseInt(chOffAttrs['@_y'], 10) : offY;
+  const chExtCx = chExtAttrs['@_cx'] ? parseInt(chExtAttrs['@_cx'], 10) : extCx;
+  const chExtCy = chExtAttrs['@_cy'] ? parseInt(chExtAttrs['@_cy'], 10) : extCy;
+
+  return { offX, offY, extCx, extCy, chOffX, chOffY, chExtCx, chExtCy };
+}
+
+/**
+ * Transforms a position from group child coordinates to absolute slide coordinates.
+ */
+function transformChildPosition(
+  childPos: ElementPosition,
+  transform: GroupTransform,
+): ElementPosition {
+  // Avoid division by zero
+  const scaleX = transform.chExtCx !== 0 ? transform.extCx / transform.chExtCx : 1;
+  const scaleY = transform.chExtCy !== 0 ? transform.extCy / transform.chExtCy : 1;
+
+  return {
+    x: Math.round(transform.offX + (childPos.x - transform.chOffX) * scaleX),
+    y: Math.round(transform.offY + (childPos.y - transform.chOffY) * scaleY),
+    width: Math.round(childPos.width * scaleX),
+    height: Math.round(childPos.height * scaleY),
+  };
+}
+
 function extractPositionFromXfrm(xfrmChildren: Children | null): ElementPosition {
   if (!xfrmChildren) return { x: 0, y: 0, width: 0, height: 0 };
 
@@ -442,6 +505,11 @@ function parseSlide(
         }
         elementIndex++;
       } else if (tagName === 'p:grpSp') {
+        // Extract the group's coordinate transformation to convert child positions
+        // from group-relative coordinates to absolute slide coordinates
+        const grpSpPr = findChild(content, 'p:grpSpPr');
+        const groupTransform = extractGroupTransform(grpSpPr);
+
         const groupContentElements = getContentElements(content);
         for (const { tagName: childTag, content: childContent } of groupContentElements) {
           if (childTag === 'p:sp') {
@@ -449,7 +517,12 @@ function parseSlide(
             const shapeName = nvSpPr ? findChildAttrs(nvSpPr, 'p:cNvPr')['@_name'] || '' : '';
             const txBody = findChild(childContent, 'p:txBody');
             const spPr = findChild(childContent, 'p:spPr');
-            const position = extractPositionFromSpPr(spPr);
+            let position = extractPositionFromSpPr(spPr);
+
+            // Transform child position from group coordinates to absolute slide coordinates
+            if (groupTransform) {
+              position = transformChildPosition(position, groupTransform);
+            }
 
             if (txBody) {
               const { paragraphs, fullText } = extractTextBody(txBody);
