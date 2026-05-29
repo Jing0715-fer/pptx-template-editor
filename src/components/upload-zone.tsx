@@ -102,7 +102,7 @@ export function UploadZone({ onAiGenerate }: UploadZoneProps) {
       });
       setFileHistory(getFileHistory());
 
-      setParsedData(data.fileId, data.fileName, data.slides);
+      setParsedData(data.fileId, data.fileName, data.slides, data.slideSize);
       toast.success(`成功解析 ${data.slideCount} 页幻灯片`);
     } catch (err) {
       setStep('upload');
@@ -172,7 +172,7 @@ export function UploadZone({ onAiGenerate }: UploadZoneProps) {
       });
       setFileHistory(getFileHistory());
 
-      setParsedData(data.fileId, entry.fileName, data.slides);
+      setParsedData(data.fileId, entry.fileName, data.slides, data.slideSize);
       toast.success(`成功重新打开 ${data.slideCount} 页幻灯片`);
     } catch (err) {
       setStep('upload');
@@ -229,7 +229,7 @@ export function UploadZone({ onAiGenerate }: UploadZoneProps) {
             .then((res) => res.json())
             .then((data) => {
               const store = usePptxStore.getState();
-              store.setParsedData(data.fileId, data.fileName, data.slides);
+              store.setParsedData(data.fileId, data.fileName, data.slides, data.slideSize);
               // Now apply JSON modifications
               store.loadFromJson(jsonData);
               toast.success('JSON 数据导入成功');

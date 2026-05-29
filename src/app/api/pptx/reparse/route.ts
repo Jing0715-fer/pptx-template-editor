@@ -142,7 +142,7 @@ export async function POST(request: Request) {
       previewImage: previewImages[index] || null,
     }));
 
-    return NextResponse.json({ fileId: newFileId, fileName: parseResult.fileName, slideCount: parseResult.slideCount, slides });
+    return NextResponse.json({ fileId: newFileId, fileName: parseResult.fileName, slideCount: parseResult.slideCount, slides, slideSize: parseResult.slideSize });
   } catch (error) {
     console.error('PPTX reparse error:', error);
     const message = error instanceof Error ? error.message : '文件处理失败';

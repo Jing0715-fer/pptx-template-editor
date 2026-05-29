@@ -178,7 +178,7 @@ export async function POST(request: Request) {
       previewImage: previewImages[index] || null,
     }));
 
-    return NextResponse.json({ fileId, fileName: parseResult.fileName, slideCount: parseResult.slideCount, slides });
+    return NextResponse.json({ fileId, fileName: parseResult.fileName, slideCount: parseResult.slideCount, slides, slideSize: parseResult.slideSize });
   } catch (error) {
     console.error('PPTX upload error:', error);
     const message = error instanceof Error ? error.message : '文件处理失败';

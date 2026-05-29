@@ -1,4 +1,4 @@
-import AdmZip from 'adm-zip';
+import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 
 // ============================================================================
@@ -18,7 +18,7 @@ export interface PptxModification {
 export interface ImageModification {
   slideIndex: number;
   imageRid: string;
-  newImageData: string; // base64
+  newImageData: string; // base64 or data URL
   newImageType: string; // 'png', 'jpeg', etc.
 }
 
@@ -493,35 +493,31 @@ function stringToBuffer(str: string, withBom: boolean): Buffer {
 }
 
 // ============================================================================
-// ZIP Verification
+// ZIP Verification (using JSZip for consistency)
 // ============================================================================
 
-function verifyPptxBuffer(buffer: Buffer): { valid: boolean; details: string } {
+async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; details: string }> {
   try {
-    const zip = new AdmZip(buffer);
-    const entries = zip.getEntries();
-    if (entries.length === 0) return { valid: false, details: 'ZIP file has no entries' };
+    const zip = await JSZip.loadAsync(buffer);
+    const entryNames = Object.keys(zip.files);
+    if (entryNames.length === 0) return { valid: false, details: 'ZIP file has no entries' };
 
-    const entryNames = entries.map((e) => e.entryName);
     if (!entryNames.includes('[Content_Types].xml')) return { valid: false, details: 'Missing [Content_Types].xml' };
     if (!entryNames.includes('_rels/.rels')) return { valid: false, details: 'Missing _rels/.rels' };
     if (!entryNames.some((n) => n.startsWith('ppt/slides/slide') && n.endsWith('.xml')))
       return { valid: false, details: 'No slide XML files found' };
 
     try {
-      const ctEntry = zip.getEntry('[Content_Types].xml');
-      if (ctEntry) {
-        const ctData = ctEntry.getData().toString('utf-8');
-        if (!ctData.includes('<Types') || !ctData.includes('</Types>'))
-          return { valid: false, details: '[Content_Types].xml has invalid structure' };
-      }
+      const ctData = await zip.file('[Content_Types].xml')?.async('string');
+      if (!ctData || !ctData.includes('<Types') || !ctData.includes('</Types>'))
+        return { valid: false, details: '[Content_Types].xml has invalid structure' };
     } catch {
       return { valid: false, details: 'Failed to read [Content_Types].xml' };
     }
 
     return {
       valid: true,
-      details: `Valid PPTX with ${entries.length} entries, ${entryNames.filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml')).length} slides`,
+      details: `Valid PPTX with ${entryNames.length} entries, ${entryNames.filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml')).length} slides`,
     };
   } catch (err) {
     return { valid: false, details: `ZIP parse error: ${err instanceof Error ? err.message : 'unknown'}` };
@@ -530,11 +526,9 @@ function verifyPptxBuffer(buffer: Buffer): { valid: boolean; details: string } {
 
 // ============================================================================
 // Main Export Function
-// FIX: Uses slideIndex + 1 for correct 1-based PPTX paths
-// FIX: Uses paragraph-aware text replacement (last run per paragraph)
-// FIX: Uses proper table cell replacement
-// FIX: Handles group shapes correctly
-// FIX: Only escapes &, <, > for XML text content
+// Uses JSZip instead of AdmZip for reliable OOXML output.
+// JSZip preserves original compression and produces ZIP files that
+// Office can open reliably.
 // ============================================================================
 
 export async function applyModificationsAndExport(
@@ -542,7 +536,7 @@ export async function applyModificationsAndExport(
   modifications: PptxModification[],
   imageModifications?: ImageModification[],
 ): Promise<Buffer> {
-  const zip = new AdmZip(pptxBuffer);
+  const zip = await JSZip.loadAsync(pptxBuffer);
 
   // Step 1: Apply text/table modifications
   const textTableMods = modifications.filter((m) => m.type === 'text' || m.type === 'table');
@@ -553,12 +547,11 @@ export async function applyModificationsAndExport(
   }
 
   for (const [slideIndex, slideMods] of Array.from(modsBySlide.entries())) {
-    // FIX: slideIndex + 1 for correct 1-based path
     const slidePath = `ppt/slides/slide${slideIndex + 1}.xml`;
-    const slideEntry = zip.getEntry(slidePath);
-    if (!slideEntry) continue;
+    const slideFile = zip.file(slidePath);
+    if (!slideFile) continue;
 
-    const rawXmlData = slideEntry.getData();
+    const rawXmlData = Buffer.from(await slideFile.async('uint8array'));
     const bomPresent = hasUtf8Bom(rawXmlData);
     let slideXml = bufferToString(rawXmlData);
 
@@ -605,31 +598,30 @@ export async function applyModificationsAndExport(
     }
 
     const outputData = stringToBuffer(slideXml, bomPresent);
-    zip.updateFile(slidePath, outputData);
+    zip.file(slidePath, outputData);
   }
 
   // Step 2: Apply image modifications
   if (imageModifications && imageModifications.length > 0) {
     for (const imgMod of imageModifications) {
       try {
-        // FIX: slideIndex + 1 for correct 1-based path
         const slideFileName = `slide${imgMod.slideIndex + 1}`;
         const relsPathWithXml = `ppt/slides/_rels/${slideFileName}.xml.rels`;
         const relsPathWithoutXml = `ppt/slides/_rels/${slideFileName}.rels`;
 
         let relsPath = relsPathWithXml;
-        let relsEntry = zip.getEntry(relsPathWithXml);
-        if (!relsEntry) {
+        let relsFile = zip.file(relsPathWithXml);
+        if (!relsFile) {
           relsPath = relsPathWithoutXml;
-          relsEntry = zip.getEntry(relsPathWithoutXml);
+          relsFile = zip.file(relsPathWithoutXml);
         }
 
-        if (!relsEntry) {
+        if (!relsFile) {
           console.error(`Rels file not found for slide ${imgMod.slideIndex + 1}`);
           continue;
         }
 
-        const relsXml = relsEntry.getData().toString('utf-8');
+        const relsXml = await relsFile.async('string');
         const relsMap = parseSlideRels(relsXml);
         const originalTarget = relsMap[imgMod.imageRid];
 
@@ -667,17 +659,17 @@ export async function applyModificationsAndExport(
             const updatedElement = elementMatch[0].replace(/Target="[^"]*"/, `Target="${newTarget}"`);
             updatedRelsXml = relsXml.replace(elementMatch[0], updatedElement);
           }
-          zip.updateFile(relsPath, Buffer.from(updatedRelsXml, 'utf-8'));
+          zip.file(relsPath, Buffer.from(updatedRelsXml, 'utf-8'));
 
-          const contentTypesEntry = zip.getEntry('[Content_Types].xml');
-          if (contentTypesEntry) {
-            const contentTypesXml = contentTypesEntry.getData().toString('utf-8');
+          // Update Content_Types.xml if the new extension is not registered
+          const contentTypesFile = zip.file('[Content_Types].xml');
+          if (contentTypesFile) {
+            const contentTypesXml = await contentTypesFile.async('string');
             if (!contentTypesXml.includes(`Extension="${newExt}"`)) {
               const mimeType = `image/${newExt}`;
-              const nsPrefix = contentTypesXml.includes('ct:Default') ? 'ct:' : '';
-              const newContentType = `<${nsPrefix}Default Extension="${newExt}" ContentType="${mimeType}"/>`;
+              const newContentType = `<Default Extension="${newExt}" ContentType="${mimeType}"/>`;
               const updatedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
-              zip.updateFile('[Content_Types].xml', Buffer.from(updatedContentTypes, 'utf-8'));
+              zip.file('[Content_Types].xml', Buffer.from(updatedContentTypes, 'utf-8'));
             }
           }
 
@@ -687,10 +679,11 @@ export async function applyModificationsAndExport(
             ? newTarget.substring(1)
             : `ppt/slides/${newTarget}`;
 
-          zip.deleteFile(mediaPath);
-          zip.addFile(newMediaPath, imageBuffer);
+          // Remove old media file and add new one
+          zip.remove(mediaPath);
+          zip.file(newMediaPath, imageBuffer);
         } else {
-          zip.updateFile(mediaPath, imageBuffer);
+          zip.file(mediaPath, imageBuffer);
         }
       } catch (err) {
         console.error(`Error replacing image rId ${imgMod.imageRid} on slide ${imgMod.slideIndex + 1}:`, err);
@@ -698,9 +691,15 @@ export async function applyModificationsAndExport(
     }
   }
 
-  const outputBuffer = zip.toBuffer();
+  // Generate output buffer using DEFLATE compression for modified files,
+  // preserving original compression for unmodified files
+  const outputBuffer = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
 
-  const verification = verifyPptxBuffer(outputBuffer);
+  const verification = await verifyPptxBuffer(outputBuffer);
   if (!verification.valid) {
     console.error('Export verification FAILED:', verification.details);
     throw new Error(`导出文件验证失败: ${verification.details}`);
@@ -719,34 +718,34 @@ export async function testExportRoundTrip(
   modifiedBuffer: Buffer,
 ): Promise<{ success: boolean; details: string }> {
   try {
-    const verification = verifyPptxBuffer(modifiedBuffer);
+    const verification = await verifyPptxBuffer(modifiedBuffer);
     if (!verification.valid) return { success: false, details: `验证失败: ${verification.details}` };
 
-    const zip = new AdmZip(modifiedBuffer);
-    const entries = zip.getEntries();
-    const entryNames = entries.map((e) => e.entryName);
+    const zip = await JSZip.loadAsync(modifiedBuffer);
+    const entryNames = Object.keys(zip.files);
 
-    const originalZip = new AdmZip(originalBuffer);
-    const originalSlideEntries = originalZip.getEntries().filter(
-      (e) => e.entryName.startsWith('ppt/slides/slide') && e.entryName.endsWith('.xml')
+    const originalZip = await JSZip.loadAsync(originalBuffer);
+    const originalSlideEntries = Object.keys(originalZip.files).filter(
+      (n) => n.startsWith('ppt/slides/slide') && n.endsWith('.xml')
     );
 
     let allSlidesPresent = true;
-    for (const slideEntry of originalSlideEntries) {
-      if (!entryNames.includes(slideEntry.entryName)) { allSlidesPresent = false; break; }
+    for (const slideName of originalSlideEntries) {
+      if (!entryNames.includes(slideName)) { allSlidesPresent = false; break; }
     }
     if (!allSlidesPresent) return { success: false, details: '部分幻灯片在导出文件中缺失' };
 
-    const mediaEntries = entries.filter((e) => e.entryName.startsWith('ppt/media/') && !e.isDirectory);
+    const mediaEntries = entryNames.filter((n) => n.startsWith('ppt/media/') && !zip.files[n].dir);
     let emptyImages = 0;
-    for (const mediaEntry of mediaEntries) {
-      if (mediaEntry.getData().length === 0) emptyImages++;
+    for (const mediaName of mediaEntries) {
+      const data = await zip.files[mediaName].async('uint8array');
+      if (data.length === 0) emptyImages++;
     }
     if (emptyImages > 0) return { success: false, details: `${emptyImages} 个图片文件为空` };
 
     return {
       success: true,
-      details: `验证通过: ${entries.length} 个文件, ${originalSlideEntries.length} 页幻灯片完整, ${mediaEntries.length} 个媒体文件`,
+      details: `验证通过: ${entryNames.length} 个文件, ${originalSlideEntries.length} 页幻灯片完整, ${mediaEntries.length} 个媒体文件`,
     };
   } catch (err) {
     return { success: false, details: `重新解析失败: ${err instanceof Error ? err.message : 'unknown'}` };

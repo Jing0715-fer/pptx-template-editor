@@ -12,9 +12,6 @@ import {
 import { scrollToElement } from '@/components/slide-editor';
 import { cn } from '@/lib/utils';
 
-const SLIDE_16_9 = { width: 12192000, height: 6858000 };
-const SLIDE_4_3 = { width: 9144000, height: 6858000 };
-
 const ELEMENT_COLORS = {
   text: { border: 'rgba(99, 102, 241, 0.5)', active: 'rgb(99, 102, 241)', activeBg: 'rgba(99, 102, 241, 0.15)', glow: 'rgba(99, 102, 241, 0.25)' },
   table: { border: 'rgba(16, 185, 129, 0.5)', active: 'rgb(16, 185, 129)', activeBg: 'rgba(16, 185, 129, 0.15)', glow: 'rgba(16, 185, 129, 0.25)' },
@@ -31,22 +28,6 @@ function hasPosition(el: PptxElement): boolean {
   return el.position.width > 0 && el.position.height > 0;
 }
 
-function detectSlideSize(elements: PptxElement[]): { width: number; height: number } {
-  let maxX = 0, maxY = 0;
-  for (const el of elements) {
-    if (hasPosition(el)) {
-      maxX = Math.max(maxX, el.position.x + el.position.width);
-      maxY = Math.max(maxY, el.position.y + el.position.height);
-    }
-  }
-  if (maxX > 0 && maxY > 0) {
-    const ratio = maxX / maxY;
-    if (ratio > 1.5) return { width: Math.max(maxX + 457200, SLIDE_16_9.width), height: Math.max(maxY + 457200, SLIDE_16_9.height) };
-    return { width: Math.max(maxX + 457200, SLIDE_4_3.width), height: Math.max(maxY + 457200, SLIDE_4_3.height) };
-  }
-  return SLIDE_16_9;
-}
-
 function getElementLabel(el: PptxElement): string {
   if (el.type === 'text') return el.shapeName || '文本框';
   if (el.type === 'table') return el.shapeName || '表格';
@@ -56,7 +37,7 @@ function getElementLabel(el: PptxElement): string {
 interface SlidePreviewProps { slide: PptxSlideData; }
 
 export function SlidePreview({ slide }: SlidePreviewProps) {
-  const { selectedElementId, selectElement, hideEmpty } = usePptxStore();
+  const { selectedElementId, selectElement, hideEmpty, slideSize } = usePptxStore();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = React.useState(0);
 
@@ -70,7 +51,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
     return () => observer.disconnect();
   }, []);
 
-  const slideSize = detectSlideSize(slide.elements);
+  // Use the actual slide dimensions from the PPTX file (parsed from presentation.xml)
   const aspectRatio = slideSize.width / slideSize.height;
   const previewWidth = containerWidth;
   const previewHeight = previewWidth / aspectRatio;

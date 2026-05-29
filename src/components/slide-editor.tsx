@@ -550,10 +550,16 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
 
   React.useEffect(() => {
     if (element.replacementImageData) {
-      // replacementImageData is raw base64, needs data URL prefix
-      const type = element.replacementImageType || 'png';
-      const mime = type === 'jpg' ? 'jpeg' : type;
-      setPreviewUrl(`data:image/${mime};base64,${element.replacementImageData}`);
+      // replacementImageData may be a full data URL or raw base64
+      if (element.replacementImageData.startsWith('data:')) {
+        // Already a complete data URL (from FileReader.readAsDataURL)
+        setPreviewUrl(element.replacementImageData);
+      } else {
+        // Raw base64, needs data URL prefix
+        const type = element.replacementImageType || 'png';
+        const mime = type === 'jpg' ? 'jpeg' : type;
+        setPreviewUrl(`data:image/${mime};base64,${element.replacementImageData}`);
+      }
     } else if (element.imageData) {
       // imageData from server already includes data URL prefix
       setPreviewUrl(element.imageData);

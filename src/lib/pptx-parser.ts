@@ -78,10 +78,16 @@ export interface PptxSlideData {
   elements: PptxElement[];
 }
 
+export interface SlideSize {
+  width: number;  // EMU
+  height: number; // EMU
+}
+
 export interface PptxParseResult {
   fileName: string;
   slideCount: number;
   slides: PptxSlideData[];
+  slideSize: SlideSize;
   _rawEntries: Record<string, Uint8Array>;
 }
 
@@ -602,7 +608,27 @@ export async function parsePptx(buffer: Buffer, fileName: string): Promise<PptxP
     }
   }
 
-  return { fileName, slideCount: slides.length, slides, _rawEntries: rawEntries };
+  // Extract slide size from presentation.xml
+  let slideSize: SlideSize = { width: 12192000, height: 6858000 }; // default 16:9
+  try {
+    const presXmlData = rawEntries['ppt/presentation.xml'];
+    if (presXmlData) {
+      const presXml = new TextDecoder('utf-8').decode(presXmlData);
+      // Extract <p:sldSz cx="..." cy="..."/>
+      const sldSzMatch = presXml.match(/<p:sldSz[^>]*\bcx\s*=\s*"(\d+)"[^>]*\bcy\s*=\s*"(\d+)"/);
+      if (sldSzMatch) {
+        slideSize = { width: parseInt(sldSzMatch[1], 10), height: parseInt(sldSzMatch[2], 10) };
+      } else {
+        // Try reversed attribute order
+        const sldSzMatch2 = presXml.match(/<p:sldSz[^>]*\bcy\s*=\s*"(\d+)"[^>]*\bcx\s*=\s*"(\d+)"/);
+        if (sldSzMatch2) {
+          slideSize = { width: parseInt(sldSzMatch2[2], 10), height: parseInt(sldSzMatch2[1], 10) };
+        }
+      }
+    }
+  } catch { /* use default */ }
+
+  return { fileName, slideCount: slides.length, slides, slideSize, _rawEntries: rawEntries };
 }
 
 // ============================================================================

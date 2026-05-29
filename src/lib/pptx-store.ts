@@ -83,6 +83,11 @@ export interface PptxSlideData {
   previewImage?: string | null;
 }
 
+export interface SlideSize {
+  width: number;  // EMU
+  height: number; // EMU
+}
+
 export interface PptxModification {
   slideIndex: number;
   elementIndex: number;
@@ -138,12 +143,13 @@ interface PptxStore {
   fileId: string | null;
   fileName: string | null;
   slides: PptxSlideData[];
+  slideSize: SlideSize;
   currentSlideIndex: number;
   selectedElementId: string | null;
   hideEmpty: boolean;
 
   setStep: (step: AppStep) => void;
-  setParsedData: (fileId: string, fileName: string, slides: PptxSlideData[]) => void;
+  setParsedData: (fileId: string, fileName: string, slides: PptxSlideData[], slideSize?: SlideSize) => void;
   setCurrentSlide: (index: number) => void;
   selectElement: (id: string | null) => void;
   updateText: (elementId: string, newText: string) => void;
@@ -166,14 +172,15 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
   fileId: null,
   fileName: null,
   slides: [],
+  slideSize: { width: 12192000, height: 6858000 },
   currentSlideIndex: 0,
   selectedElementId: null,
   hideEmpty: true,
 
   setStep: (step) => set({ step }),
 
-  setParsedData: (fileId, fileName, slides) =>
-    set({ fileId, fileName, slides, currentSlideIndex: 0, selectedElementId: null, step: 'editing' }),
+  setParsedData: (fileId, fileName, slides, slideSize) =>
+    set({ fileId, fileName, slides, slideSize: slideSize || { width: 12192000, height: 6858000 }, currentSlideIndex: 0, selectedElementId: null, step: 'editing' }),
 
   setCurrentSlide: (index) => set({ currentSlideIndex: index, selectedElementId: null }),
   selectElement: (id) => set({ selectedElementId: id }),
@@ -370,6 +377,7 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
 
   reset: () => set({
     step: 'upload', fileId: null, fileName: null, slides: [],
+    slideSize: { width: 12192000, height: 6858000 },
     currentSlideIndex: 0, selectedElementId: null, hideEmpty: true,
   }),
 }));

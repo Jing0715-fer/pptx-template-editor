@@ -1,22 +1,23 @@
 ---
 Task ID: 1
 Agent: Main Agent
-Task: Build PPTX Template Editor with bug fixes and UI refactoring
+Task: Fix PPTX export, image preview, and alignment issues
 
 Work Log:
-- Analyzed the original GitHub repo codebase thoroughly
-- Identified 8 critical bugs in the original pptx-replacer.ts (slideIndex off-by-one, broken table replacement, image loss, etc.)
-- Installed required packages: adm-zip, jszip, fast-xml-parser, mammoth, xlsx
-- Created backend lib files with the FIXED replacer (using sedD4rfMp corrected version)
-- Created all 7 API routes (parse, export, preview, check, reparse, save-json, ai/generate)
-- Created 6 frontend components (upload-zone, slide-editor, slide-navigator, slide-preview, toolbar, ai-generate-dialog)
-- Created main page.tsx with full app flow
-- Fixed image preview URL handling for replacementImageData (needs data URL prefix)
-- Updated export route to pass imageModifications directly (no conversion needed)
-- All lint checks pass, dev server running successfully
+- Diagnosed exported PPTX files not opening in Office - caused by AdmZip library producing unreliable OOXML output
+- Rewrote pptx-replacer.ts to use JSZip instead of AdmZip for both reading and writing PPTX files
+- Fixed image replacement not displaying in UI - double data URL prefix bug in slide-editor.tsx useEffect
+- Fixed preview alignment issues by parsing actual slide dimensions from ppt/presentation.xml instead of guessing
+- Added SlideSize type to parser, store, and API responses
+- Updated SlidePreview component to use actual slide dimensions from the store
+- All exports validated with python-pptx - text modification, image replacement, cross-type image replacement, and combined modifications all work correctly
+- Lint check passes
 
 Stage Summary:
-- Key bug fixes: slideIndex+1 for correct PPTX paths, paragraph-aware text replacement (last run), proper table cell replacement, group shape handling, correct XML text escaping
-- Key architectural fix: Export route passes imageModifications directly as base64 strings instead of converting to Buffers
-- UI fully refactored with shadcn/ui, Framer Motion animations, responsive design, engineering-grade quality
-- All functionality preserved: upload, parse, edit text/table/image, AI generate, export PPTX, save JSON, file history
+- pptx-replacer.ts: Switched from AdmZip to JSZip for reliable OOXML output
+- slide-editor.tsx: Fixed double data URL prefix bug in image preview useEffect
+- pptx-parser.ts: Added SlideSize extraction from presentation.xml
+- pptx-store.ts: Added slideSize to store state and setParsedData
+- parse/route.ts & reparse/route.ts: Pass slideSize in API responses
+- upload-zone.tsx: Pass slideSize to setParsedData
+- slide-preview.tsx: Use actual slideSize from store instead of heuristic detection
