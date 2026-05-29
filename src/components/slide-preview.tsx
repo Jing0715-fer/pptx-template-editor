@@ -83,6 +83,14 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
               (el.type === 'table' && el.currentRows !== undefined && el.currentRows.some((r, ri) => r.cells.some((c, ci) => c.text !== el.rows[ri]?.cells[ci]?.text))) ||
               (el.type === 'image' && !!(el as PptxImageElement).replacementImageData);
 
+            // For image elements with replacement, show the replacement image as thumbnail
+            const imgEl = el.type === 'image' ? (el as PptxImageElement) : null;
+            const replacementThumbnail = imgEl?.replacementImageData
+              ? (imgEl.replacementImageData.startsWith('data:')
+                ? imgEl.replacementImageData
+                : `data:image/${imgEl.replacementImageType || 'png'};base64,${imgEl.replacementImageData}`)
+              : null;
+
             // Use percentage-based positioning for accurate alignment
             const leftPct = (el.position.x / slideW) * 100;
             const topPct = (el.position.y / slideH) * 100;
@@ -93,7 +101,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
             if (widthPct < 0.1 || heightPct < 0.1) return null;
 
             return (
-              <button key={el.id} className="absolute rounded-[2px] transition-all duration-150 cursor-pointer"
+              <button key={el.id} className="absolute rounded-[2px] transition-all duration-150 cursor-pointer overflow-hidden"
                 style={{
                   left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
                   backgroundColor: isSelected ? colors.activeBg : 'transparent',
@@ -107,6 +115,14 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
                 onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.border = isModified ? '2px solid rgba(249, 115, 22, 0.7)' : '1.5px solid transparent'; } }}
                 title={`${getElementLabel(el)} (双击跳转编辑)`}
               >
+                {/* Show replacement image as thumbnail overlay */}
+                {replacementThumbnail && (
+                  <img
+                    src={replacementThumbnail}
+                    alt="Replaced"
+                    className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none"
+                  />
+                )}
                 {isSelected && heightPct > 3 && widthPct > 5 && (
                   <span className="absolute -top-4 left-0 text-[8px] font-bold px-1 py-px rounded-t whitespace-nowrap shadow-md"
                     style={{ backgroundColor: colors.active, color: 'white', fontSize: '8px', lineHeight: '12px' }}>

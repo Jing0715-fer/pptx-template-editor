@@ -471,6 +471,211 @@ function findNthContentElementInGroup(
 }
 
 // ============================================================================
+// Content_Types.xml Sanitization
+// ============================================================================
+
+// Proper MIME type mapping for image extensions (OPC spec compliant)
+const IMAGE_MIME_MAP: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  tiff: 'image/tiff',
+  tif: 'image/tiff',
+  emf: 'image/x-emf',
+  wmf: 'image/x-wmf',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+};
+
+/**
+ * Sanitizes [Content_Types].xml to fix invalid MIME types and ensure Office compatibility.
+ * Fixes issues found in WPS-created PPTX files:
+ * - "image/.jpg" (extra dot) → "image/jpeg"
+ * - Case-insensitive MIME types → lowercase
+ * - Incorrect MIME type for jpg → "image/jpeg" (not "image/jpg")
+ * - Uppercase extensions like Extension="JPG" → Extension="jpg"
+ */
+function sanitizeContentTypesXml(xml: string): string {
+  let result = xml;
+
+  // 1. Fix patterns like "image/.jpg", "image/.png", etc. (extra dot before extension)
+  // This is the PRIMARY bug: WPS writes ContentType="image/.jpg" instead of "image/jpeg"
+  result = result.replace(
+    /ContentType="image\/\.([a-zA-Z+]+)"/g,
+    (_match: string, ext: string) => {
+      const corrected = IMAGE_MIME_MAP[ext.toLowerCase()] || `image/${ext.toLowerCase()}`;
+      return `ContentType="${corrected}"`;
+    }
+  );
+
+  // 2. Fix ContentType="image/jpg" → ContentType="image/jpeg"
+  result = result.replace(
+    /ContentType="image\/jpg"/gi,
+    'ContentType="image/jpeg"'
+  );
+
+  // 3. Fix case-insensitive MIME types (e.g., "Image/JPEG" → "image/jpeg")
+  result = result.replace(
+    /ContentType="Image\/JPEG"/gi,
+    'ContentType="image/jpeg"'
+  );
+  result = result.replace(
+    /ContentType="Image\/PNG"/gi,
+    'ContentType="image/png"'
+  );
+  result = result.replace(
+    /ContentType="Image\/GIF"/gi,
+    'ContentType="image/gif"'
+  );
+  result = result.replace(
+    /ContentType="Image\/BMP"/gi,
+    'ContentType="image/bmp"'
+  );
+  result = result.replace(
+    /ContentType="Image\/TIFF"/gi,
+    'ContentType="image/tiff"'
+  );
+  result = result.replace(
+    /ContentType="Image\/SVG\+XML"/gi,
+    'ContentType="image/svg+xml"'
+  );
+  result = result.replace(
+    /ContentType="Image\/X-EMF"/gi,
+    'ContentType="image/x-emf"'
+  );
+  result = result.replace(
+    /ContentType="Image\/X-WMF"/gi,
+    'ContentType="image/x-wmf"'
+  );
+  result = result.replace(
+    /ContentType="Image\/WEBP"/gi,
+    'ContentType="image/webp"'
+  );
+
+  // 4. Normalize uppercase extensions to lowercase (e.g., Extension="JPG" → Extension="jpg")
+  // and ensure correct MIME type mapping
+  result = result.replace(
+    /<Default\s+Extension="([A-Z]{2,})"\s+ContentType="([^"]+)"/g,
+    (_match: string, ext: string, contentType: string) => {
+      const lowerExt = ext.toLowerCase();
+      const correctMime = IMAGE_MIME_MAP[lowerExt] || contentType;
+      return `<Default Extension="${lowerExt}" ContentType="${correctMime}"`;
+    }
+  );
+
+  // Also handle Extension and ContentType in reverse attribute order
+  result = result.replace(
+    /<Default\s+ContentType="([^"]+)"\s+Extension="([A-Z]{2,})"/g,
+    (_match: string, contentType: string, ext: string) => {
+      const lowerExt = ext.toLowerCase();
+      const correctMime = IMAGE_MIME_MAP[lowerExt] || contentType;
+      return `<Default ContentType="${correctMime}" Extension="${lowerExt}"`;
+    }
+  );
+
+  // 5. Remove any <Default> entries for ppt/tags/ if they exist
+  // (WPS adds ContentType entries for its non-standard tag files)
+  result = result.replace(
+    /<Default\s+Extension="tag"\s+ContentType="[^"]*"[^/]*\/>/g,
+    ''
+  );
+
+  return result;
+}
+
+/**
+ * Removes WPS-specific files from the ZIP that may cause issues in Windows Office.
+ * WPS adds non-standard files like ppt/tags/tag*.xml which are not part of
+ * the OOXML specification and may cause Windows Office to reject the file.
+ */
+function removeWpsSpecificFiles(zip: JSZip): void {
+  const entriesToRemove: string[] = [];
+
+  for (const [filePath, file] of Object.entries(zip.files)) {
+    // Remove WPS tag files: ppt/tags/tag*.xml
+    if (filePath.startsWith('ppt/tags/')) {
+      entriesToRemove.push(filePath);
+    }
+    // Remove WPS-specific custom property entries in docProps
+    // These are often referenced but not needed by standard Office
+    // Note: We don't remove docProps/core.xml or docProps/app.xml as they're standard
+  }
+
+  for (const entry of entriesToRemove) {
+    zip.remove(entry);
+  }
+
+  if (entriesToRemove.length > 0) {
+    console.log(`Removed ${entriesToRemove.length} WPS-specific files`);
+  }
+}
+
+/**
+ * Sanitizes WPS-specific XML attributes and elements from presentation files.
+ * Removes non-standard namespaces and attributes that Windows Office strict
+ * parser may reject.
+ */
+async function sanitizeWpsXmlAttributes(zip: JSZip): Promise<void> {
+  const xmlFilesToSanitize = [
+    'ppt/presentation.xml',
+    'ppt/presProps.xml',
+    'ppt/viewProps.xml',
+    'docProps/core.xml',
+    'docProps/app.xml',
+  ];
+
+  for (const filePath of xmlFilesToSanitize) {
+    const file = zip.file(filePath);
+    if (!file) continue;
+
+    try {
+      const xml = Buffer.from(await file.async('uint8array'));
+      const bomPresent = hasUtf8Bom(xml);
+      let content = bufferToString(xml);
+
+      let modified = false;
+
+      // Remove KSOProductBuildVer custom property (WPS-specific)
+      if (content.includes('KSOProductBuildVer')) {
+        // Remove the entire property element containing KSOProductBuildVer
+        content = content.replace(/<property[^>]*>\s*<vt:lpstr[^>]*>KSOProductBuildVer<\/vt:lpstr>\s*<\/property>/g, '');
+        // Also handle the variant where value comes first
+        content = content.replace(/<property[^>]*KSOProductBuildVer[^>]*>[\s\S]*?<\/property>/g, '');
+        modified = true;
+      }
+
+      // Remove WPS-specific namespace declarations that reference WPS URIs
+      // These are typically xmlns: prefixes pointing to WPS domains
+      content = content.replace(/\s+xmlns:[a-zA-Z0-9]+="http[^"]*wps[^"]*"/gi, () => {
+        modified = true;
+        return '';
+      });
+      content = content.replace(/\s+xmlns:[a-zA-Z0-9]+="http[^"]*kingsoft[^"]*"/gi, () => {
+        modified = true;
+        return '';
+      });
+
+      // Remove WPS-specific XML elements using those namespaces
+      // Pattern: <prefix:anyElement ...> or <prefix:anyElement .../>
+      content = content.replace(/<[a-zA-Z0-9]+:[a-zA-Z0-9]+[^>]*xmlns[^>]*wps[^>]*\/?>/gi, () => {
+        modified = true;
+        return '';
+      });
+
+      if (modified) {
+        const outputData = stringToBuffer(content, bomPresent);
+        zip.file(filePath, outputData, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      }
+    } catch {
+      // Skip files that can't be parsed
+    }
+  }
+}
+
+// ============================================================================
 // BOM Handling
 // ============================================================================
 
@@ -511,6 +716,12 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
       const ctData = await zip.file('[Content_Types].xml')?.async('string');
       if (!ctData || !ctData.includes('<Types') || !ctData.includes('</Types>'))
         return { valid: false, details: '[Content_Types].xml has invalid structure' };
+
+      // Check for invalid MIME types that Windows Office strictly rejects
+      const invalidMimeMatch = ctData.match(/ContentType="image\/\.[a-zA-Z+]+"/);
+      if (invalidMimeMatch) {
+        return { valid: false, details: `[Content_Types].xml contains invalid MIME type: ${invalidMimeMatch[0]} (extra dot before extension)` };
+      }
     } catch {
       return { valid: false, details: 'Failed to read [Content_Types].xml' };
     }
@@ -729,7 +940,7 @@ export async function applyModificationsAndExport(
           if (contentTypesFile) {
             const contentTypesXml = await contentTypesFile.async('string');
             if (!contentTypesXml.includes(`Extension="${newExt}"`)) {
-              const mimeType = `image/${newExt}`;
+              const mimeType = IMAGE_MIME_MAP[newExt] || `image/${newExt}`;
               const newContentType = `<Default Extension="${newExt}" ContentType="${mimeType}"/>`;
               const updatedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
               zip.file('[Content_Types].xml', Buffer.from(updatedContentTypes, 'utf-8'), { compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -759,7 +970,33 @@ export async function applyModificationsAndExport(
     }
   }
 
-  // Step 3: Ensure unmodified XML files keep DEFLATE compression
+  // Step 3: Sanitize [Content_Types].xml to fix WPS-specific invalid MIME types
+  // This is critical for Windows Office compatibility:
+  // - Fixes "image/.jpg" → "image/jpeg" (OPC spec violation)
+  // - Normalizes uppercase extensions (Extension="JPG" → Extension="jpg")
+  // - Ensures correct MIME mapping for all image types
+  const contentTypesFile = zip.file('[Content_Types].xml');
+  if (contentTypesFile) {
+    const ctRawData = Buffer.from(await contentTypesFile.async('uint8array'));
+    const ctBomPresent = hasUtf8Bom(ctRawData);
+    const ctXml = bufferToString(ctRawData);
+    const sanitizedXml = sanitizeContentTypesXml(ctXml);
+    if (sanitizedXml !== ctXml) {
+      console.log('[Content_Types].xml sanitized: fixed invalid MIME types or extensions');
+      const ctOutputData = stringToBuffer(sanitizedXml, ctBomPresent);
+      zip.file('[Content_Types].xml', ctOutputData, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      modifiedFiles.add('[Content_Types].xml');
+    }
+  }
+
+  // Step 4: Remove WPS-specific files that may cause Windows Office issues
+  // WPS adds non-standard files like ppt/tags/tag*.xml
+  removeWpsSpecificFiles(zip);
+
+  // Step 5: Sanitize WPS-specific XML attributes from presentation files
+  await sanitizeWpsXmlAttributes(zip);
+
+  // Step 6: Ensure unmodified XML files keep DEFLATE compression
   // JSZip's generateAsync defaults to STORE, but PPTX files should use
   // DEFLATE for XML content. We need to re-compress unmodified XML files.
   const xmlExtensions = ['.xml', '.rels'];

@@ -549,6 +549,12 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
   const isSelected = selectedElementId === element.id;
   const isModified = !!element.replacementImageData;
 
+  // Determine if the original image format is browser-displayable
+  const isBrowserDisplayable = React.useMemo(() => {
+    const nonDisplayableTypes = ['emf', 'wmf', 'tiff', 'tif'];
+    return !nonDisplayableTypes.includes(element.imageType.toLowerCase());
+  }, [element.imageType]);
+
   // Memoize the preview URL computation to avoid unnecessary re-renders
   const computedPreviewUrl = React.useMemo(() => {
     if (element.replacementImageData) {
@@ -564,6 +570,11 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
       }
     } else if (element.imageData) {
       // imageData from server already includes data URL prefix
+      // Check if the MIME type is displayable in browsers
+      if (element.imageData.startsWith('data:image/x-emf') || element.imageData.startsWith('data:image/x-wmf')) {
+        // EMF/WMF images can't be displayed in browsers
+        return null;
+      }
       return element.imageData;
     }
     return null;
@@ -681,7 +692,7 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
                       className="max-w-full max-h-48 object-contain cursor-pointer"
                       onClick={() => setIsZoomed(true)}
                       onError={() => {
-                        console.error('Image preview failed to load:', previewUrl?.substring(0, 80));
+                        console.error('Image preview failed to load, URL prefix:', previewUrl?.substring(0, 60));
                         setImageError(true);
                       }}
                     />
@@ -697,7 +708,18 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
                 ) : (
                   <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
                     <ImageIcon className="w-8 h-8 opacity-30" />
-                    <span className="text-xs">{imageError ? '图片加载失败' : '无法预览此图片'}</span>
+                    <span className="text-xs">
+                      {imageError && isModified
+                        ? '替换图片加载失败'
+                        : imageError
+                        ? '图片加载失败'
+                        : !isBrowserDisplayable
+                        ? `${element.imageType.toUpperCase()} 格式无法预览`
+                        : '无法预览此图片'}
+                    </span>
+                    {!isBrowserDisplayable && !isModified && (
+                      <span className="text-[10px] text-orange-500">请替换为 PNG/JPEG 格式</span>
+                    )}
                     {imageError && isModified && (
                       <span className="text-[10px] text-orange-500">替换图片数据可能已损坏</span>
                     )}
