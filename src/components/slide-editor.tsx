@@ -544,29 +544,35 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
   const [isExpanded, setIsExpanded] = React.useState(true);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [isZoomed, setIsZoomed] = React.useState(false);
+  const [imageError, setImageError] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const isSelected = selectedElementId === element.id;
   const isModified = !!element.replacementImageData;
 
-  React.useEffect(() => {
+  // Memoize the preview URL computation to avoid unnecessary re-renders
+  const computedPreviewUrl = React.useMemo(() => {
     if (element.replacementImageData) {
       // replacementImageData may be a full data URL or raw base64
       if (element.replacementImageData.startsWith('data:')) {
         // Already a complete data URL (from FileReader.readAsDataURL)
-        setPreviewUrl(element.replacementImageData);
+        return element.replacementImageData;
       } else {
         // Raw base64, needs data URL prefix
         const type = element.replacementImageType || 'png';
-        const mime = type === 'jpg' ? 'jpeg' : type;
-        setPreviewUrl(`data:image/${mime};base64,${element.replacementImageData}`);
+        const mime = type === 'jpg' || type === 'jpeg' ? 'jpeg' : type;
+        return `data:image/${mime};base64,${element.replacementImageData}`;
       }
     } else if (element.imageData) {
       // imageData from server already includes data URL prefix
-      setPreviewUrl(element.imageData);
-    } else {
-      setPreviewUrl(null);
+      return element.imageData;
     }
+    return null;
   }, [element.replacementImageData, element.replacementImageType, element.imageData]);
+
+  React.useEffect(() => {
+    setPreviewUrl(computedPreviewUrl);
+    setImageError(false);
+  }, [computedPreviewUrl]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -584,14 +590,24 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const base64 = ev.target?.result as string;
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
+      const base64DataUrl = ev.target?.result as string;
+      if (!base64DataUrl) {
+        toast.error('图片读取失败');
+        return;
+      }
+      // Determine image type from MIME type in data URL (more reliable than file extension)
+      const mimeMatch = base64DataUrl.match(/data:image\/([a-z+]+)/);
+      const detectedType = mimeMatch ? mimeMatch[1].replace('+xml', '') : 'png';
       const typeMap: Record<string, string> = {
-        png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif', bmp: 'bmp', webp: 'webp', svg: 'svg',
+        png: 'png', jpeg: 'jpeg', jpg: 'jpeg', gif: 'gif', bmp: 'bmp',
+        webp: 'webp', svg: 'svg', 'svg+xml': 'svg',
       };
-      const imageType = typeMap[ext] || 'png';
-      updateImage(element.id, base64, imageType);
+      const imageType = typeMap[detectedType] || 'png';
+      updateImage(element.id, base64DataUrl, imageType);
       toast.success('图片已替换');
+    };
+    reader.onerror = () => {
+      toast.error('图片读取失败，请重试');
     };
     reader.readAsDataURL(file);
 
@@ -657,13 +673,17 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
             <div className="px-4 pb-4 space-y-3">
               {/* Image preview */}
               <div className="relative group rounded-md overflow-hidden border bg-muted/30 flex items-center justify-center min-h-[100px]">
-                {previewUrl ? (
+                {previewUrl && !imageError ? (
                   <>
                     <img
                       src={previewUrl}
                       alt={element.imageName || 'Image'}
                       className="max-w-full max-h-48 object-contain cursor-pointer"
                       onClick={() => setIsZoomed(true)}
+                      onError={() => {
+                        console.error('Image preview failed to load:', previewUrl?.substring(0, 80));
+                        setImageError(true);
+                      }}
                     />
                     <Button
                       variant="secondary"
@@ -677,7 +697,15 @@ function ImageElementDisplay({ element }: { element: PptxImageElement }) {
                 ) : (
                   <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
                     <ImageIcon className="w-8 h-8 opacity-30" />
-                    <span className="text-xs">无法预览此图片</span>
+                    <span className="text-xs">{imageError ? '图片加载失败' : '无法预览此图片'}</span>
+                    {imageError && isModified && (
+                      <span className="text-[10px] text-orange-500">替换图片数据可能已损坏</span>
+                    )}
+                  </div>
+                )}
+                {isModified && !imageError && (
+                  <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-500 text-white shadow-sm">
+                    已替换
                   </div>
                 )}
               </div>

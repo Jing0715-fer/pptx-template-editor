@@ -1,23 +1,36 @@
 ---
 Task ID: 1
 Agent: Main Agent
-Task: Fix PPTX export, image preview, and alignment issues
+Task: Fix PPTX export bug (files can't be opened by Office), fix image replacement display, fix preview alignment, and create E2E tests
 
 Work Log:
-- Diagnosed exported PPTX files not opening in Office - caused by AdmZip library producing unreliable OOXML output
-- Rewrote pptx-replacer.ts to use JSZip instead of AdmZip for both reading and writing PPTX files
-- Fixed image replacement not displaying in UI - double data URL prefix bug in slide-editor.tsx useEffect
-- Fixed preview alignment issues by parsing actual slide dimensions from ppt/presentation.xml instead of guessing
-- Added SlideSize type to parser, store, and API responses
-- Updated SlidePreview component to use actual slide dimensions from the store
-- All exports validated with python-pptx - text modification, image replacement, cross-type image replacement, and combined modifications all work correctly
-- Lint check passes
+- Investigated full codebase: pptx-replacer.ts, pptx-parser.ts, export route, parse route, slide-editor, slide-preview, toolbar
+- Ran diagnostic scripts to test export with actual PPTX files
+- Identified key issues and applied fixes
+
+- Fixed pptx-replacer.ts:
+  - Changed to per-file compression (DEFLATE for XML, STORE for binary/images)
+  - Fixed text modification order: collect all modifications first, find regions before any changes, apply in reverse position order
+  - Added re-compression of unmodified XML files with DEFLATE for Office compatibility
+  - Added round-trip parse verification using parsePptx after generation
+
+- Fixed export API route:
+  - Removed Content-Encoding: identity header
+  - Added round-trip test verification call
+
+- Fixed slide-editor.tsx (ImageElementDisplay):
+  - Used React.useMemo for preview URL computation
+  - Changed MIME type detection from file extension to data URL MIME type
+  - Added FileReader onerror handler and image load error handling
+  - Added visual "已替换" badge on replaced images
+
+- Fixed slide-preview.tsx:
+  - Changed from pixel-based to percentage-based positioning
+  - Eliminates cumulative scaling errors that caused frames to be too high on lower part
+
+- Created comprehensive E2E test suites (15 + 5 tests), all passed
 
 Stage Summary:
-- pptx-replacer.ts: Switched from AdmZip to JSZip for reliable OOXML output
-- slide-editor.tsx: Fixed double data URL prefix bug in image preview useEffect
-- pptx-parser.ts: Added SlideSize extraction from presentation.xml
-- pptx-store.ts: Added slideSize to store state and setParsedData
-- parse/route.ts & reparse/route.ts: Pass slideSize in API responses
-- upload-zone.tsx: Pass slideSize to setParsedData
-- slide-preview.tsx: Use actual slideSize from store instead of heuristic detection
+- All export bugs fixed and verified with LibreOffice and round-trip tests
+- Image replacement display improved with error handling
+- Preview alignment fixed with percentage-based positioning

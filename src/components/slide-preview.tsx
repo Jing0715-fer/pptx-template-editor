@@ -38,24 +38,14 @@ interface SlidePreviewProps { slide: PptxSlideData; }
 
 export function SlidePreview({ slide }: SlidePreviewProps) {
   const { selectedElementId, selectElement, hideEmpty, slideSize } = usePptxStore();
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = React.useState(0);
-
-  React.useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) setContainerWidth(entry.contentRect.width);
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
 
   // Use the actual slide dimensions from the PPTX file (parsed from presentation.xml)
   const aspectRatio = slideSize.width / slideSize.height;
-  const previewWidth = containerWidth;
-  const previewHeight = previewWidth / aspectRatio;
-  const scale = previewWidth / slideSize.width;
+
+  // Use percentage-based positioning to avoid pixel scaling errors
+  // This ensures overlay frames align perfectly with the preview image at any size
+  const slideW = slideSize.width;
+  const slideH = slideSize.height;
 
   const visibleElements = slide.elements.filter((el) => !(hideEmpty && isEmptyElement(el)));
   const elementsWithPosition = visibleElements.filter(hasPosition);
@@ -67,7 +57,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
   };
 
   return (
-    <div ref={containerRef} className="w-full">
+    <div className="w-full">
       <div className="relative w-full rounded-lg border border-border/50 overflow-hidden shadow-lg" style={{ paddingBottom: `${(1 / aspectRatio) * 100}%` }}>
         <div className="absolute inset-0">
           {hasPreviewImage && (
@@ -78,7 +68,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
               <div className="absolute inset-0 bg-white" />
               <div className="absolute inset-0 opacity-[0.04]" style={{
                 backgroundImage: 'linear-gradient(rgba(99, 102, 241, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, 0.3) 1px, transparent 1px)',
-                backgroundSize: `${100 * scale}px ${100 * scale}px`,
+                backgroundSize: `${100 / slideW * 914400}px ${100 / slideH * 914400}px`,
               }} />
               <div className="absolute inset-0 flex items-center justify-center">
                 <span className="text-[10px] text-muted-foreground/30 font-medium">第 {slide.slideNumber} 页 · 无预览截图</span>
@@ -93,16 +83,19 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
               (el.type === 'table' && el.currentRows !== undefined && el.currentRows.some((r, ri) => r.cells.some((c, ci) => c.text !== el.rows[ri]?.cells[ci]?.text))) ||
               (el.type === 'image' && !!(el as PptxImageElement).replacementImageData);
 
-            const left = el.position.x * scale;
-            const top = el.position.y * scale;
-            const width = el.position.width * scale;
-            const height = el.position.height * scale;
-            if (width < 2 || height < 2) return null;
+            // Use percentage-based positioning for accurate alignment
+            const leftPct = (el.position.x / slideW) * 100;
+            const topPct = (el.position.y / slideH) * 100;
+            const widthPct = (el.position.width / slideW) * 100;
+            const heightPct = (el.position.height / slideH) * 100;
+
+            // Skip very small elements
+            if (widthPct < 0.1 || heightPct < 0.1) return null;
 
             return (
               <button key={el.id} className="absolute rounded-[2px] transition-all duration-150 cursor-pointer"
                 style={{
-                  left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`,
+                  left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
                   backgroundColor: isSelected ? colors.activeBg : 'transparent',
                   border: isSelected ? `2px solid ${colors.active}` : isModified ? '2px solid rgba(249, 115, 22, 0.7)' : '1.5px solid transparent',
                   boxShadow: isSelected ? `0 0 0 3px ${colors.glow}, 0 0 12px ${colors.glow}` : 'none',
@@ -114,7 +107,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
                 onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.border = isModified ? '2px solid rgba(249, 115, 22, 0.7)' : '1.5px solid transparent'; } }}
                 title={`${getElementLabel(el)} (双击跳转编辑)`}
               >
-                {isSelected && height > 12 && width > 30 && (
+                {isSelected && heightPct > 3 && widthPct > 5 && (
                   <span className="absolute -top-4 left-0 text-[8px] font-bold px-1 py-px rounded-t whitespace-nowrap shadow-md"
                     style={{ backgroundColor: colors.active, color: 'white', fontSize: '8px', lineHeight: '12px' }}>
                     {getElementLabel(el)}

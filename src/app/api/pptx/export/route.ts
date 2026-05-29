@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { applyModificationsAndExport } from '@/lib/pptx-replacer';
+import { applyModificationsAndExport, testExportRoundTrip } from '@/lib/pptx-replacer';
 import type { PptxModification, ImageModification } from '@/lib/pptx-replacer';
 
 export const maxDuration = 120;
@@ -40,24 +40,30 @@ export async function POST(request: Request) {
       }
     }
 
-    // FIX: Pass imageModifications directly to the replacer.
-    // The fixed pptx-replacer.ts accepts base64 strings directly in ImageModification.
-    // No conversion needed - frontend sends base64 strings, replacer handles them.
     const outputBuffer = await applyModificationsAndExport(
       pptxBuffer,
       modifications || [],
       imageModifications || [],
     );
 
+    // Run round-trip test for additional verification
+    const roundTripResult = await testExportRoundTrip(pptxBuffer, outputBuffer);
+    if (!roundTripResult.success) {
+      console.error('Round-trip test FAILED:', roundTripResult.details);
+      // Still return the file but log the warning
+    } else {
+      console.log('Round-trip test passed:', roundTripResult.details);
+    }
+
+    // Return the PPTX as binary - avoid Content-Encoding header as it can cause issues
+    // with proxies and browsers misinterpreting the binary data
     return new Response(outputBuffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         'Content-Disposition': 'attachment; filename="modified.pptx"',
         'Content-Length': String(outputBuffer.length),
-        'Content-Encoding': 'identity',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (error) {

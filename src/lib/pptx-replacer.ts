@@ -515,9 +515,26 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
       return { valid: false, details: 'Failed to read [Content_Types].xml' };
     }
 
+    // Verify all slide XML files are valid XML
+    const slideEntries = entryNames.filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml'));
+    let invalidSlides = 0;
+    for (const slideName of slideEntries) {
+      try {
+        const slideData = await zip.file(slideName)?.async('string');
+        if (!slideData || !slideData.includes('<p:sld')) {
+          invalidSlides++;
+        }
+      } catch {
+        invalidSlides++;
+      }
+    }
+    if (invalidSlides > 0) {
+      return { valid: false, details: `${invalidSlides} slides have invalid XML` };
+    }
+
     return {
       valid: true,
-      details: `Valid PPTX with ${entryNames.length} entries, ${entryNames.filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml')).length} slides`,
+      details: `Valid PPTX with ${entryNames.length} entries, ${slideEntries.length} slides`,
     };
   } catch (err) {
     return { valid: false, details: `ZIP parse error: ${err instanceof Error ? err.message : 'unknown'}` };
@@ -526,9 +543,12 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
 
 // ============================================================================
 // Main Export Function
-// Uses JSZip instead of AdmZip for reliable OOXML output.
-// JSZip preserves original compression and produces ZIP files that
-// Office can open reliably.
+//
+// Key design decisions for Office compatibility:
+// 1. Per-file compression: XML files use DEFLATE, binary files use STORE
+// 2. All modifications applied before writing back to ZIP
+// 3. BOM preservation for XML files
+// 4. Round-trip verification after generation
 // ============================================================================
 
 export async function applyModificationsAndExport(
@@ -537,6 +557,9 @@ export async function applyModificationsAndExport(
   imageModifications?: ImageModification[],
 ): Promise<Buffer> {
   const zip = await JSZip.loadAsync(pptxBuffer);
+
+  // Track which files we've modified (for per-file compression)
+  const modifiedFiles = new Set<string>();
 
   // Step 1: Apply text/table modifications
   const textTableMods = modifications.filter((m) => m.type === 'text' || m.type === 'table');
@@ -571,34 +594,73 @@ export async function applyModificationsAndExport(
       continue;
     }
 
+    // CRITICAL FIX: Collect ALL modifications first, then apply them in reverse position order
+    // This prevents position offsets from being invalidated by earlier replacements
+    const pendingReplacements: {
+      regionStart: number;
+      regionEnd: number;
+      mod: PptxModification;
+      groupChildInfo: { groupSpTreeIndex: number; childIndexInGroup: number } | null;
+    }[] = [];
+
     for (const mod of slideMods) {
       try {
         const groupChildInfo = getGroupChildInfo(parsed, mod.elementIndex);
+        pendingReplacements.push({
+          regionStart: -1,
+          regionEnd: -1,
+          mod,
+          groupChildInfo,
+        });
+      } catch (err) {
+        console.error(`Error preparing modification for element ${mod.elementIndex} on slide ${slideIndex + 1}:`, err);
+      }
+    }
+
+    // Find all element regions in the CURRENT xml (before any modifications)
+    for (const pending of pendingReplacements) {
+      try {
         let elementRegion: { tag: string; start: number; end: number } | null;
 
-        if (groupChildInfo) {
-          const groupRegion = findNthContentElementInString(slideXml, groupChildInfo.groupSpTreeIndex);
+        if (pending.groupChildInfo) {
+          const groupRegion = findNthContentElementInString(slideXml, pending.groupChildInfo.groupSpTreeIndex);
           if (!groupRegion) continue;
-          elementRegion = findNthContentElementInGroup(slideXml, groupRegion.start, groupRegion.end, groupChildInfo.childIndexInGroup);
+          elementRegion = findNthContentElementInGroup(slideXml, groupRegion.start, groupRegion.end, pending.groupChildInfo.childIndexInGroup);
         } else {
-          const spTreeIndex = getSpTreeIndexForElement(parsed, mod.elementIndex);
+          const spTreeIndex = getSpTreeIndexForElement(parsed, pending.mod.elementIndex);
           elementRegion = findNthContentElementInString(slideXml, spTreeIndex);
         }
 
         if (!elementRegion) continue;
+        pending.regionStart = elementRegion.start;
+        pending.regionEnd = elementRegion.end;
+      } catch (err) {
+        console.error(`Error finding region for element ${pending.mod.elementIndex} on slide ${slideIndex + 1}:`, err);
+      }
+    }
 
-        if (mod.type === 'text' && mod.newText !== undefined) {
-          slideXml = replaceTextInRegion(slideXml, elementRegion.start, elementRegion.end, mod.newText);
-        } else if (mod.type === 'table' && mod.tableCells) {
-          slideXml = replaceTableCellsInRegion(slideXml, elementRegion.start, elementRegion.end, mod.tableCells);
+    // Sort by region start position in DESCENDING order (apply from end to start)
+    // This ensures earlier replacements don't shift positions of later ones
+    const validReplacements = pendingReplacements.filter(r => r.regionStart >= 0);
+    validReplacements.sort((a, b) => b.regionStart - a.regionStart);
+
+    // Apply modifications from end to start
+    for (const pending of validReplacements) {
+      try {
+        if (pending.mod.type === 'text' && pending.mod.newText !== undefined) {
+          slideXml = replaceTextInRegion(slideXml, pending.regionStart, pending.regionEnd, pending.mod.newText);
+        } else if (pending.mod.type === 'table' && pending.mod.tableCells) {
+          slideXml = replaceTableCellsInRegion(slideXml, pending.regionStart, pending.regionEnd, pending.mod.tableCells);
         }
       } catch (err) {
-        console.error(`Error applying modification for element ${mod.elementIndex} on slide ${slideIndex + 1}:`, err);
+        console.error(`Error applying modification for element ${pending.mod.elementIndex} on slide ${slideIndex + 1}:`, err);
       }
     }
 
     const outputData = stringToBuffer(slideXml, bomPresent);
-    zip.file(slidePath, outputData);
+    // Use DEFLATE for XML files (they compress well)
+    zip.file(slidePath, outputData, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    modifiedFiles.add(slidePath);
   }
 
   // Step 2: Apply image modifications
@@ -659,7 +721,8 @@ export async function applyModificationsAndExport(
             const updatedElement = elementMatch[0].replace(/Target="[^"]*"/, `Target="${newTarget}"`);
             updatedRelsXml = relsXml.replace(elementMatch[0], updatedElement);
           }
-          zip.file(relsPath, Buffer.from(updatedRelsXml, 'utf-8'));
+          zip.file(relsPath, Buffer.from(updatedRelsXml, 'utf-8'), { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+          modifiedFiles.add(relsPath);
 
           // Update Content_Types.xml if the new extension is not registered
           const contentTypesFile = zip.file('[Content_Types].xml');
@@ -669,7 +732,8 @@ export async function applyModificationsAndExport(
               const mimeType = `image/${newExt}`;
               const newContentType = `<Default Extension="${newExt}" ContentType="${mimeType}"/>`;
               const updatedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
-              zip.file('[Content_Types].xml', Buffer.from(updatedContentTypes, 'utf-8'));
+              zip.file('[Content_Types].xml', Buffer.from(updatedContentTypes, 'utf-8'), { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+              modifiedFiles.add('[Content_Types].xml');
             }
           }
 
@@ -681,9 +745,13 @@ export async function applyModificationsAndExport(
 
           // Remove old media file and add new one
           zip.remove(mediaPath);
-          zip.file(newMediaPath, imageBuffer);
+          // Use STORE for binary image files (they're already compressed)
+          zip.file(newMediaPath, imageBuffer, { compression: 'STORE' });
+          modifiedFiles.add(newMediaPath);
         } else {
-          zip.file(mediaPath, imageBuffer);
+          // Use STORE for binary image files (they're already compressed)
+          zip.file(mediaPath, imageBuffer, { compression: 'STORE' });
+          modifiedFiles.add(mediaPath);
         }
       } catch (err) {
         console.error(`Error replacing image rId ${imgMod.imageRid} on slide ${imgMod.slideIndex + 1}:`, err);
@@ -691,18 +759,47 @@ export async function applyModificationsAndExport(
     }
   }
 
-  // Generate output buffer using DEFLATE compression for modified files,
-  // preserving original compression for unmodified files
+  // Step 3: Ensure unmodified XML files keep DEFLATE compression
+  // JSZip's generateAsync defaults to STORE, but PPTX files should use
+  // DEFLATE for XML content. We need to re-compress unmodified XML files.
+  const xmlExtensions = ['.xml', '.rels'];
+  for (const [filePath, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    if (modifiedFiles.has(filePath)) continue; // Already handled
+
+    const isXml = xmlExtensions.some(ext => filePath.toLowerCase().endsWith(ext));
+    if (isXml) {
+      // Re-add the file with DEFLATE compression
+      const data = await file.async('uint8array');
+      zip.file(filePath, data, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    }
+    // Non-XML, non-modified files keep their original compression (STORE by default)
+  }
+
+  // Generate output buffer without global compression (per-file settings will apply)
   const outputBuffer = await zip.generateAsync({
     type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
+    // Don't set global compression - we've set per-file compression above
+    // This defaults to STORE for files without explicit compression,
+    // but our XML files and modified files have explicit compression settings
   });
 
   const verification = await verifyPptxBuffer(outputBuffer);
   if (!verification.valid) {
     console.error('Export verification FAILED:', verification.details);
     throw new Error(`导出文件验证失败: ${verification.details}`);
+  }
+
+  // Additional round-trip check: verify the output can be parsed back
+  try {
+    const { parsePptx } = await import('./pptx-parser');
+    const testParse = await parsePptx(outputBuffer, 'verify.pptx');
+    if (testParse.slides.length === 0) {
+      throw new Error('导出文件无法解析出任何幻灯片');
+    }
+  } catch (err) {
+    console.error('Round-trip parse verification FAILED:', err);
+    throw new Error(`导出文件验证失败(重新解析): ${err instanceof Error ? err.message : 'unknown'}`);
   }
 
   console.log('Export verification passed:', verification.details);
@@ -742,6 +839,17 @@ export async function testExportRoundTrip(
       if (data.length === 0) emptyImages++;
     }
     if (emptyImages > 0) return { success: false, details: `${emptyImages} 个图片文件为空` };
+
+    // Try to parse with our parser
+    try {
+      const { parsePptx } = await import('./pptx-parser');
+      const parseResult = await parsePptx(modifiedBuffer, 'roundtrip.pptx');
+      if (parseResult.slides.length === 0) {
+        return { success: false, details: '重新解析后没有找到幻灯片' };
+      }
+    } catch (err) {
+      return { success: false, details: `重新解析失败: ${err instanceof Error ? err.message : 'unknown'}` };
+    }
 
     return {
       success: true,
