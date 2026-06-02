@@ -32,33 +32,50 @@ function hasPosition(el: PptxElement): boolean {
  * Determine if an element is a "background-style" element that should NOT
  * be rendered as an interactive highlight overlay.
  *
- * Two cases are treated as background:
- *  1. Image elements that cover ≥90% of the slide AND have no replacement
- *     — these are usually the slide's main background image (WPS stores
- *     full-bleed backgrounds as <p:pic> elements rather than slide masters).
- *     Rendering them as a highlight overlay would obscure the rest of the
- *     slide and click events on them are not meaningful.
- *  2. Empty text rectangles that cover ≥90% of the slide — these are
- *     "page background" rectangles with no content; they're decorative
- *     and should not show up as an editable element.
+ * Two patterns are filtered out:
+ *
+ *  1. Full-bleed (>=90% on both axes) elements that are empty / no-replacement.
+ *     - Full-bleed image with no replacement: WPS stores the main slide
+ *       background as a <p:pic> rather than a slide master.
+ *     - Full-bleed empty text rect: a "page background" rect with no text.
+ *
+ *  2. Decorative empty text rectangles that occupy a large fraction of
+ *     the slide (>=10% on each axis AND area >= 5%). These show up heavily
+ *     in WPS scientific templates as colored "card" / "panel" backgrounds
+ *     (e.g. dark-purple rounded rectangles behind protein models). The
+ *     <p:txBody> is empty so they would otherwise render as huge,
+ *     clickable dashed-border rectangles that obscure the actual content.
+ *     The slide preview image (from pptx-glimpse) already includes these
+ *     decorative shapes, so rendering an overlay on top adds no value
+ *     and only confuses the user.
+ *
+ *  Image elements that ARE replacements or images the user is meant to
+ *  swap out are NOT filtered (they need to be selectable).
  */
 function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): boolean {
   if (el.position.width === 0 || el.position.height === 0) return false;
   const wPct = el.position.width / slideW;
   const hPct = el.position.height / slideH;
   const coversMostOfSlide = wPct >= 0.9 && hPct >= 0.9;
-
-  if (!coversMostOfSlide) return false;
+  const isLargeDecor = wPct >= 0.1 && hPct >= 0.1 && (wPct * hPct) >= 0.05;
 
   if (el.type === 'image') {
-    // Background images: full-bleed, no replacement
-    const imgEl = el as PptxImageElement;
-    if (!imgEl.replacementImageData) return true;
+    // Full-bleed images with no replacement are background.
+    if (coversMostOfSlide) {
+      const imgEl = el as PptxImageElement;
+      if (!imgEl.replacementImageData) return true;
+    }
+    return false;
   }
+
   if (el.type === 'text') {
-    // Empty full-bleed text rectangles (no actual content)
-    if (isEmptyElement(el)) return true;
+    // Empty full-bleed text rectangles are background.
+    if (coversMostOfSlide && isEmptyElement(el)) return true;
+    // Large empty decorative rectangles / rounded rectangles / arcs (WPS
+    // scientific-template styling) are background.
+    if (isLargeDecor && isEmptyElement(el)) return true;
   }
+
   return false;
 }
 
@@ -83,6 +100,20 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
 
   const visibleElements = slide.elements.filter((el) => !(hideEmpty && isEmptyElement(el)));
   const elementsWithPosition = visibleElements.filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH));
+  // Decorative overlays: show empty decorative rectangles (WPS template card
+  // backgrounds etc.) as a very faint dashed outline so the user can see
+  // the layout, but they are not clickable / selectable.
+  const decorOverlays = slide.elements.filter((el) => {
+    if (!hideEmpty) return false; // only when "hide empty" is on
+    if (!isEmptyElement(el)) return false;
+    if (!hasPosition(el)) return false;
+    if (isBackgroundElement(el, slideW, slideH)) return false;
+    // A decorative overlay = a small empty text element (not big enough
+    // to be a background rectangle, not a textbox of interest).
+    const wPct = el.position.width / slideW;
+    const hPct = el.position.height / slideH;
+    return wPct < 0.5 && hPct < 0.5;
+  });
   const hasPreviewImage = !!slide.previewImage;
 
   const handleDoubleClick = (el: PptxElement) => {
@@ -109,6 +140,30 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
               </div>
             </>
           )}
+
+          {/* Decorative (empty) element outlines — very faint, non-interactive.
+              Helps the user see WPS template card / panel decorations without
+              confusing them with editable content. */}
+          {decorOverlays.map((el) => {
+            const leftPct = (el.position.x / slideW) * 100;
+            const topPct = (el.position.y / slideH) * 100;
+            const widthPct = (el.position.width / slideW) * 100;
+            const heightPct = (el.position.height / slideH) * 100;
+            if (widthPct < 0.1 || heightPct < 0.1) return null;
+            return (
+              <div
+                key={`decor-${el.id}`}
+                className="absolute rounded-[2px] pointer-events-none"
+                style={{
+                  left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
+                  border: '1px dotted rgba(120, 120, 120, 0.35)',
+                  backgroundColor: 'transparent',
+                  zIndex: 1,
+                }}
+                title={`${el.shapeName || '\u88c5\u9970\u533a\u57df'} (\u4e0d\u53ef\u7f16\u8f91)`}
+              />
+            );
+          })}
 
           {elementsWithPosition.map((el) => {
             const colors = ELEMENT_COLORS[el.type];
