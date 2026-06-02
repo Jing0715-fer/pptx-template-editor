@@ -13,9 +13,9 @@ import { scrollToElement } from '@/components/slide-editor';
 import { cn } from '@/lib/utils';
 
 const ELEMENT_COLORS = {
-  text: { border: 'rgba(99, 102, 241, 0.5)', active: 'rgb(99, 102, 241)', activeBg: 'rgba(99, 102, 241, 0.15)', glow: 'rgba(99, 102, 241, 0.25)' },
-  table: { border: 'rgba(16, 185, 129, 0.5)', active: 'rgb(16, 185, 129)', activeBg: 'rgba(16, 185, 129, 0.15)', glow: 'rgba(16, 185, 129, 0.25)' },
-  image: { border: 'rgba(168, 85, 247, 0.5)', active: 'rgb(168, 85, 247)', activeBg: 'rgba(168, 85, 247, 0.15)', glow: 'rgba(168, 85, 247, 0.25)' },
+  text: { border: 'rgba(99, 102, 241, 0.85)', active: 'rgb(99, 102, 241)', activeBg: 'rgba(99, 102, 241, 0.18)', glow: 'rgba(99, 102, 241, 0.35)' },
+  table: { border: 'rgba(16, 185, 129, 0.85)', active: 'rgb(16, 185, 129)', activeBg: 'rgba(16, 185, 129, 0.18)', glow: 'rgba(16, 185, 129, 0.35)' },
+  image: { border: 'rgba(168, 85, 247, 0.85)', active: 'rgb(168, 85, 247)', activeBg: 'rgba(168, 85, 247, 0.18)', glow: 'rgba(168, 85, 247, 0.35)' },
 };
 
 export function isEmptyElement(el: PptxElement): boolean {
@@ -26,6 +26,40 @@ export function isEmptyElement(el: PptxElement): boolean {
 
 function hasPosition(el: PptxElement): boolean {
   return el.position.width > 0 && el.position.height > 0;
+}
+
+/**
+ * Determine if an element is a "background-style" element that should NOT
+ * be rendered as an interactive highlight overlay.
+ *
+ * Two cases are treated as background:
+ *  1. Image elements that cover ≥90% of the slide AND have no replacement
+ *     — these are usually the slide's main background image (WPS stores
+ *     full-bleed backgrounds as <p:pic> elements rather than slide masters).
+ *     Rendering them as a highlight overlay would obscure the rest of the
+ *     slide and click events on them are not meaningful.
+ *  2. Empty text rectangles that cover ≥90% of the slide — these are
+ *     "page background" rectangles with no content; they're decorative
+ *     and should not show up as an editable element.
+ */
+function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): boolean {
+  if (el.position.width === 0 || el.position.height === 0) return false;
+  const wPct = el.position.width / slideW;
+  const hPct = el.position.height / slideH;
+  const coversMostOfSlide = wPct >= 0.9 && hPct >= 0.9;
+
+  if (!coversMostOfSlide) return false;
+
+  if (el.type === 'image') {
+    // Background images: full-bleed, no replacement
+    const imgEl = el as PptxImageElement;
+    if (!imgEl.replacementImageData) return true;
+  }
+  if (el.type === 'text') {
+    // Empty full-bleed text rectangles (no actual content)
+    if (isEmptyElement(el)) return true;
+  }
+  return false;
 }
 
 function getElementLabel(el: PptxElement): string {
@@ -48,7 +82,7 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
   const slideH = slideSize.height;
 
   const visibleElements = slide.elements.filter((el) => !(hideEmpty && isEmptyElement(el)));
-  const elementsWithPosition = visibleElements.filter(hasPosition);
+  const elementsWithPosition = visibleElements.filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH));
   const hasPreviewImage = !!slide.previewImage;
 
   const handleDoubleClick = (el: PptxElement) => {
@@ -105,14 +139,34 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
                 style={{
                   left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
                   backgroundColor: isSelected ? colors.activeBg : 'transparent',
-                  border: isSelected ? `2px solid ${colors.active}` : isModified ? '2px solid rgba(249, 115, 22, 0.7)' : '1.5px solid transparent',
+                  // Default: dashed colored border so the user can see ALL editable
+                  // regions at a glance. Selected / modified get a solid stronger border.
+                  border: isSelected
+                    ? `2px solid ${colors.active}`
+                    : isModified
+                      ? '2px solid rgba(249, 115, 22, 0.9)'
+                      : `1.5px dashed ${colors.border}`,
                   boxShadow: isSelected ? `0 0 0 3px ${colors.glow}, 0 0 12px ${colors.glow}` : 'none',
                   zIndex: isSelected ? 20 : 10,
                 }}
                 onClick={(e) => { e.stopPropagation(); selectElement(el.id); }}
                 onDoubleClick={(e) => { e.stopPropagation(); handleDoubleClick(el); }}
-                onMouseEnter={(e) => { if (!isSelected) { e.currentTarget.style.backgroundColor = colors.activeBg; e.currentTarget.style.border = isModified ? '2px solid rgba(249, 115, 22, 0.8)' : `1.5px solid ${colors.border}`; } }}
-                onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.border = isModified ? '2px solid rgba(249, 115, 22, 0.7)' : '1.5px solid transparent'; } }}
+                onMouseEnter={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.backgroundColor = colors.activeBg;
+                    e.currentTarget.style.border = isModified
+                      ? '2px solid rgba(249, 115, 22, 1)'
+                      : `1.5px solid ${colors.active}`;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.border = isModified
+                      ? '2px solid rgba(249, 115, 22, 0.9)'
+                      : `1.5px dashed ${colors.border}`;
+                  }
+                }}
                 title={`${getElementLabel(el)} (双击跳转编辑)`}
               >
                 {/* Show replacement image as thumbnail overlay */}
@@ -140,13 +194,13 @@ export function SlidePreview({ slide }: SlidePreviewProps) {
 
       <div className="flex items-center gap-2 mt-1.5 text-[8px] text-muted-foreground">
         <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(99, 102, 241, 0.3)', border: '1px solid rgba(99, 102, 241, 0.5)' }} /> 文本
+          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(99, 102, 241, 0.5)', border: '1px solid rgba(99, 102, 241, 0.85)' }} /> 文本
         </span>
         <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(16, 185, 129, 0.3)', border: '1px solid rgba(16, 185, 129, 0.5)' }} /> 表格
+          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(16, 185, 129, 0.5)', border: '1px solid rgba(16, 185, 129, 0.85)' }} /> 表格
         </span>
         <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(168, 85, 247, 0.3)', border: '1px solid rgba(168, 85, 247, 0.5)' }} /> 图片
+          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(168, 85, 247, 0.5)', border: '1px solid rgba(168, 85, 247, 0.85)' }} /> 图片
         </span>
         <span className="flex items-center gap-0.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)', border: '1px solid white' }} /> 已修改
