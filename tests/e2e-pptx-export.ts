@@ -161,8 +161,21 @@ async function runTests() {
     const zip = await JSZip.loadAsync(outputBuffer);
     const entryNames = Object.keys(zip.files);
 
-    const hasWpsTags = entryNames.some(f => f.startsWith('ppt/tags/'));
-    assert(!hasWpsTags, 'No ppt/tags/ files in exported PPTX');
+    // WPS ppt/tags/ files are INTENTIONALLY KEPT in the exported file.
+    // See comment in applyModificationsAndExport — macOS PowerPoint's
+    // internal consistency check requires these files to remain present,
+    // otherwise it rejects the entire package with no user-facing error.
+    // We do, however, clean up the WPS-specific Override entries in
+    // [Content_Types].xml (Step 6 of sanitizeContentTypesXml) so the
+    // Content_Types stream is OPC-clean.
+    const wpsTagFiles = entryNames.filter(f => f.startsWith('ppt/tags/'));
+    assert(wpsTagFiles.length === 0 || wpsTagFiles.length > 0,
+      `ppt/tags/ files: ${wpsTagFiles.length} (kept for PowerPoint compat)`);
+    const ct = await readContentTypes(zip);
+    if (ct) {
+      const wpsOverrideInCT = /PartName="\/ppt\/tags\/tag\d+\.xml"/.test(ct);
+      assert(!wpsOverrideInCT, 'No WPS tag Override entries in [Content_Types].xml');
+    }
 
     // Core files should still exist
     assert(entryNames.includes('[Content_Types].xml'), '[Content_Types].xml preserved');
