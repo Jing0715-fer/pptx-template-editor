@@ -111,7 +111,7 @@ export default function Home() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Desktop slide navigator */}
-        <div className="hidden md:block min-h-0">
+        <div className="hidden md:flex md:flex-col md:h-full min-h-0">
           <SlideNavigator slides={slides} />
         </div>
 
@@ -199,7 +199,7 @@ export default function Home() {
           </div>
 
           {/* Elements list (right side) */}
-          <div className="hidden lg:block w-[420px] border-l overflow-hidden">
+          <div className="hidden lg:block w-[420px] border-l overflow-y-auto">
             {currentSlide ? (
               <SlideEditor slide={currentSlide} />
             ) : (

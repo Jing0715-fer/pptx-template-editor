@@ -43,7 +43,7 @@ export function SlideNavigator({ slides }: SlideNavigatorProps) {
 
   if (isCollapsed) {
     return (
-      <div className="flex flex-col items-center w-12 border-r bg-muted/30 py-2 gap-2">
+      <div className="flex flex-col items-center w-12 h-full min-h-0 border-r bg-muted/30 py-2 gap-2">
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -85,7 +85,7 @@ export function SlideNavigator({ slides }: SlideNavigatorProps) {
   }
 
   return (
-    <div className="flex flex-col w-64 border-r bg-muted/30">
+    <div className="flex flex-col w-64 h-full min-h-0 border-r bg-muted/30">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <div className="flex items-center gap-1.5">
@@ -132,7 +132,7 @@ export function SlideNavigator({ slides }: SlideNavigatorProps) {
       </div>
 
       {/* Slide list */}
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-2 space-y-2">
           {slides.map((slide, index) => {
             const isActive = index === currentSlideIndex;
@@ -217,7 +217,7 @@ export function SlideNavigator({ slides }: SlideNavigatorProps) {
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Footer stats */}
       <div className="px-3 py-2 border-t text-[9px] text-muted-foreground">
