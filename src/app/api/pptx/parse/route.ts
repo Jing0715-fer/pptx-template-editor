@@ -34,12 +34,24 @@ async function generatePreviewImages(pptxPath: string): Promise<string[]> {
     }
 
     const imgPrefix = path.join(outputDir, 'slide');
+    let usedPyMuPdf = false;
+    // Try pdftoppm first (poppler), then ImageMagick, then PyMuPDF (Python).
     try {
       await execFileAsync('pdftoppm', ['-jpeg', '-jpegopt', 'quality=75', '-r', '96', '-hide-annotations', pdfPath, imgPrefix], { timeout: 60000 });
     } catch {
       try {
         await execFileAsync('convert', ['-density', '96', '-quality', '75', pdfPath, `${imgPrefix}.jpg`], { timeout: 60000 });
-      } catch { return generatePreviewImagesFallback(pptxPath); }
+      } catch {
+        // Try PyMuPDF via Python (works on macOS without brew poppler)
+        try {
+          const pyScript = path.join(process.cwd(), 'scripts', 'pdf2img.py');
+          await execFileAsync('python3', [pyScript, pdfPath, imgPrefix, '96', '75', String(MAX_PREVIEW_SIZE)], { timeout: 60000 });
+          usedPyMuPdf = true;
+        } catch (pyErr) {
+          console.warn('PyMuPDF fallback also failed:', pyErr);
+          return generatePreviewImagesFallback(pptxPath);
+        }
+      }
     }
 
     const files = await readdir(outputDir);
