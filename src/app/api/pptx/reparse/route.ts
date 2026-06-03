@@ -132,10 +132,23 @@ export async function POST(request: Request) {
       elements: slide.elements.map((element) => {
         if (element.type === 'image') {
           let imageData: string | null = null;
-          try { imageData = getImageAsBase64(parseResult._rawEntries, element.imageName); } catch (err) {
+          let imageMimeType: string = element.imageType;
+          try {
+            const fullDataUrl = getImageAsBase64(parseResult._rawEntries, element.imageName);
+            if (fullDataUrl) {
+              // Strip the "data:mime;base64," prefix to get just the raw base64 data
+              const base64Match = fullDataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+              if (base64Match) {
+                imageMimeType = base64Match[1];
+                imageData = base64Match[2];
+              } else {
+                imageData = fullDataUrl;
+              }
+            }
+          } catch (err) {
             console.warn(`Failed to extract image ${element.imageName}:`, err);
           }
-          return { ...element, imageData };
+          return { ...element, imageData, imageType: imageMimeType };
         }
         return element;
       }),

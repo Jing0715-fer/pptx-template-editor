@@ -513,9 +513,11 @@ const IMAGE_MIME_MAP: Record<string, string> = {
  * Sanitizes [Content_Types].xml to fix invalid MIME types and ensure Office compatibility.
  * Fixes issues found in WPS-created PPTX files:
  * - "image/.jpg" (extra dot) → "image/jpeg"
+ * - "image/image/png" (doubled prefix) → "image/png"
  * - Case-insensitive MIME types → lowercase
  * - Incorrect MIME type for jpg → "image/jpeg" (not "image/jpg")
  * - Uppercase extensions like Extension="JPG" → Extension="jpg"
+ * - Extension containing slashes like Extension="image/png" → remove (invalid)
  * - **Duplicate <Default> ContentType** (OPC spec violation: two <Default> entries
  *   pointing to the same ContentType is illegal and causes Windows Office to
  *   trigger a "needs repair" dialog, which in turn may lose parts of the
@@ -523,6 +525,16 @@ const IMAGE_MIME_MAP: Record<string, string> = {
  */
 function sanitizeContentTypesXml(xml: string): string {
   let result = xml;
+
+  // 0. Fix doubled MIME prefix: ContentType="image/image/png" → ContentType="image/png"
+  // WPS bug: writes ContentType="image/image/png" with Extension="image/png"
+  result = result.replace(
+    /ContentType="image\/image\/([a-zA-Z+]+)"/g,
+    (_match: string, sub: string) => {
+      const corrected = IMAGE_MIME_MAP[sub.toLowerCase()] || `image/${sub.toLowerCase()}`;
+      return `ContentType="${corrected}"`;
+    }
+  );
 
   // 1. Fix patterns like "image/.jpg", "image/.png", etc. (extra dot before extension)
   // This is the PRIMARY bug: WPS writes ContentType="image/.jpg" instead of "image/jpeg"
@@ -599,7 +611,26 @@ function sanitizeContentTypesXml(xml: string): string {
     }
   );
 
-  // 5. Remove any <Default> entries for ppt/tags/ if they exist
+  // 5. Remove <Default> entries with invalid Extension containing a slash
+  // WPS bug: writes Extension="image/png" ContentType="image/png"
+  // After step 0 above, ContentType is fixed but Extension="image/png" is still
+  // invalid (OPC spec says Extension must be a simple file extension, no slashes).
+  // This will also create a duplicate ContentType with the valid
+  // <Default Extension="png" ContentType="image/png"/> entry, which the
+  // deduplication in step 8 would handle — but it's safer to remove the
+  // malformed entry entirely because dedup may not match the slash-containing
+  // extension when rewriting <Override> PartName references.
+  result = result.replace(
+    /<Default\s+Extension="[^"]*\/[^"]*"\s+ContentType="[^"]*"[^/]*\/>/g,
+    ''
+  );
+  // Also handle reversed attribute order: ContentType before Extension
+  result = result.replace(
+    /<Default\s+ContentType="[^"]*"\s+Extension="[^"]*\/[^"]*"[^/]*\/>/g,
+    ''
+  );
+
+  // 5b. Remove any <Default> entries for ppt/tags/ if they exist
   // (WPS adds ContentType entries for its non-standard tag files)
   result = result.replace(
     /<Default\s+Extension="tag"\s+ContentType="[^"]*"[^/]*\/>/g,
@@ -926,6 +957,10 @@ async function sanitizeWpsXmlAttributes(zip: JSZip): Promise<void> {
         ''
       );
 
+      // ---- Normalize excessive whitespace left by removals ----
+      // Multiple consecutive blank lines → single newline
+      content = content.replace(/\n\s*\n/g, '\n');
+
       if (content !== before) {
         const outputData = stringToBuffer(content, bomPresent);
         zip.file(filePath, outputData, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -982,6 +1017,18 @@ async function verifyPptxBuffer(buffer: Buffer): Promise<{ valid: boolean; detai
       const invalidMimeMatch = ctData.match(/ContentType="image\/\.[a-zA-Z+]+"/);
       if (invalidMimeMatch) {
         return { valid: false, details: `[Content_Types].xml contains invalid MIME type: ${invalidMimeMatch[0]} (extra dot before extension)` };
+      }
+
+      // Check for doubled MIME prefix: ContentType="image/image/png"
+      const doubledMimeMatch = ctData.match(/ContentType="image\/image\//);
+      if (doubledMimeMatch) {
+        return { valid: false, details: '[Content_Types].xml contains doubled MIME prefix (image/image/)' };
+      }
+
+      // Check for Extension containing slashes: Extension="image/png"
+      const slashExtMatch = ctData.match(/Extension="[^"]*\/[^"]*"/);
+      if (slashExtMatch) {
+        return { valid: false, details: `[Content_Types].xml contains invalid Extension with slash: ${slashExtMatch[0]}` };
       }
 
       // Check for WPS tag Override entries that reference non-existent files
@@ -1207,11 +1254,47 @@ export async function applyModificationsAndExport(
           ? originalTarget.substring(1)
           : `ppt/slides/${originalTarget}`;
 
-        const originalExt = originalTarget.split('.').pop()?.toLowerCase() || '';
-        const newExt = imgMod.newImageType.toLowerCase() === 'jpg' ? 'jpeg' : imgMod.newImageType.toLowerCase();
+        // Extract the actual file extension from the target path.
+        // Handle WPS non-standard nested paths like "../media/image5.image/png"
+        // where the "extension" is the format name after the last slash inside
+        // a directory named "*.image". For standard paths like "../media/image3.png",
+        // the extension is simply the part after the last dot.
+        const originalExt = (() => {
+          // Check for WPS-style .image/ directory structure (e.g., "image5.image/png")
+          const wpsImageMatch = originalTarget.match(/\.image\/([a-zA-Z0-9]+)$/);
+          if (wpsImageMatch) return wpsImageMatch[1].toLowerCase();
+          // Standard path: take the part after the last dot
+          const lastDotIdx = originalTarget.lastIndexOf('.');
+          if (lastDotIdx >= 0) return originalTarget.substring(lastDotIdx + 1).toLowerCase();
+          return '';
+        })();
+
+        // Normalize newImageType: accept both MIME types ("image/png") and plain extensions ("png")
+        const newExt = (() => {
+          let ext = imgMod.newImageType.toLowerCase().trim();
+          // Strip MIME type prefix: "image/png" → "png", "image/jpeg" → "jpeg"
+          if (ext.includes('/')) {
+            ext = ext.split('/').pop() || ext;
+          }
+          // Normalize jpg → jpeg
+          if (ext === 'jpg') ext = 'jpeg';
+          return ext;
+        })();
 
         if (originalExt !== newExt) {
-          const newTarget = originalTarget.replace(/\.[^.]+$/, `.${newExt}`);
+          // Compute the new target path. For WPS-style nested paths like
+          // "../media/image5.image/png", produce a flat path like "../media/image5.jpeg"
+          // instead of another nested path. For standard paths like "../media/image3.png",
+          // just replace the extension.
+          const newTarget = (() => {
+            const wpsImageMatch = originalTarget.match(/^(.+)\.image\/[a-zA-Z0-9]+$/);
+            if (wpsImageMatch) {
+              // WPS nested path: replace ".image/png" with ".{newExt}"
+              return `${wpsImageMatch[1]}.${newExt}`;
+            }
+            // Standard path: just replace the last extension
+            return originalTarget.replace(/\.[^.]+$/, `.${newExt}`);
+          })();
           const escapedRid = imgMod.imageRid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const elementRegex = new RegExp(`<Relationship\\s[^>]*Id="${escapedRid}"[^>]*/?\\s*>`);
           const elementMatch = relsXml.match(elementRegex);
@@ -1249,13 +1332,68 @@ export async function applyModificationsAndExport(
           zip.file(newMediaPath, imageBuffer, { compression: 'STORE' });
           modifiedFiles.add(newMediaPath);
         } else {
-          // Use STORE for binary image files (they're already compressed)
-          zip.file(mediaPath, imageBuffer, { compression: 'STORE' });
-          modifiedFiles.add(mediaPath);
+          // Same extension — but check if the original is a WPS nested path like
+          // "../media/image5.image/png". If so, normalize to a flat path for
+          // Office compatibility. The .image/ directory structure is non-standard
+          // and causes Content_Types mapping failures because the part name
+          // "image5.image/png" doesn't match any <Default Extension="..."> entry.
+          const wpsImageMatch = originalTarget.match(/^(.+)\.image\/[a-zA-Z0-9]+$/);
+          if (wpsImageMatch) {
+            const flatTarget = `${wpsImageMatch[1]}.${newExt}`;
+            const flatMediaPath = flatTarget.startsWith('../')
+              ? `ppt/${flatTarget.substring(3)}`
+              : flatTarget.startsWith('/')
+              ? flatTarget.substring(1)
+              : `ppt/slides/${flatTarget}`;
+
+            // Update the .rels target
+            const escapedRid = imgMod.imageRid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const elementRegex = new RegExp(`<Relationship\\s[^>]*Id="${escapedRid}"[^>]*/?\\s*>`);
+            const elementMatch = relsXml.match(elementRegex);
+            let updatedRelsXml = relsXml;
+            if (elementMatch) {
+              const updatedElement = elementMatch[0].replace(/Target="[^"]*"/, `Target="${flatTarget}"`);
+              updatedRelsXml = relsXml.replace(elementMatch[0], updatedElement);
+            }
+            zip.file(relsPath, Buffer.from(updatedRelsXml, 'utf-8'), { compression: 'DEFLATE', compressionOptions: { level: 6 } });
+            modifiedFiles.add(relsPath);
+
+            // Remove old nested file, add new flat file
+            zip.remove(mediaPath);
+            zip.file(flatMediaPath, imageBuffer, { compression: 'STORE' });
+            modifiedFiles.add(flatMediaPath);
+          } else {
+            // Standard flat path: just replace the file content
+            zip.file(mediaPath, imageBuffer, { compression: 'STORE' });
+            modifiedFiles.add(mediaPath);
+          }
         }
       } catch (err) {
         console.error(`Error replacing image rId ${imgMod.imageRid} on slide ${imgMod.slideIndex + 1}:`, err);
       }
+    }
+  }
+
+  // Step 2b: Clean up WPS .image/ directory entries from the ZIP.
+  // WPS creates non-standard directory structures like ppt/media/image5.image/
+  // with the actual image file inside as ppt/media/image5.image/png. When we
+  // replace images, we normalize these to flat paths (ppt/media/image5.jpeg),
+  // but the directory entry may remain as an empty leftover. Office rejects
+  // packages with these empty non-standard directories, so we remove them.
+  const wpsImageDirs: string[] = [];
+  for (const [filePath, file] of Object.entries(zip.files)) {
+    if (file.dir && filePath.match(/\.image\/$/)) {
+      wpsImageDirs.push(filePath);
+    }
+  }
+  for (const dir of wpsImageDirs) {
+    // Only remove if no files exist inside the directory
+    const hasChildren = Object.keys(zip.files).some(
+      f => f.startsWith(dir) && !zip.files[f].dir
+    );
+    if (!hasChildren) {
+      zip.remove(dir);
+      console.log(`Removed empty WPS .image/ directory: ${dir}`);
     }
   }
 
@@ -1278,55 +1416,28 @@ export async function applyModificationsAndExport(
     }
   }
 
-  // Step 4: Remove WPS-specific files that may cause Windows Office issues
-  // WPS adds non-standard files like ppt/tags/tag*.xml
-  //
-  // ⚠️ DISABLED: macOS PowerPoint's strict OPC parser REJECTS the entire package
-  // when .rels files reference non-existent targets. Even though the dangling refs
-  // are technically OPC violations, PowerPoint uses them internally as state
-  // markers — removing the tag files (or even just removing the .rels refs while
-  // keeping the files) breaks PowerPoint's internal consistency check and causes
-  // "PPStorage::LoadDocument Failed" with no user-facing error dialog.
-  //
-  // Real-world test (2026-06-02): removing these 82 WPS files (or just the .rels
-  // refs) breaks PowerPoint loading. Keeping them preserves PowerPoint's
-  // tolerance for the otherwise-invalid WPS OPC structure.
-  //
-  // The tag files are harmless on disk (small ~256-byte XML) and don't trigger
-  // the "needs repair" dialog that the duplicate ContentType was causing.
-  // removeWpsSpecificFiles(zip);  // ← intentionally disabled
+  // Step 4: WPS file removal DISABLED (breaks macOS PowerPoint)
+  // removeWpsSpecificFiles(zip);
 
-  // Step 4b: Remove WPS tag references from ALL .rels files
-  // ⚠️ DISABLED for the same reason as Step 4 above. See comment block.
-  // await removeTagReferencesFromRels(zip, modifiedFiles);  // ← intentionally disabled
+  // Step 4b: WPS tag refs removal DISABLED
+  // await removeTagReferencesFromRels(zip, modifiedFiles);
 
   // Step 5: Sanitize WPS-specific XML attributes from presentation files
   await sanitizeWpsXmlAttributes(zip);
 
   // Step 6: Ensure unmodified XML files keep DEFLATE compression
-  // JSZip's generateAsync defaults to STORE, but PPTX files should use
-  // DEFLATE for XML content. We need to re-compress unmodified XML files.
   const xmlExtensions = ['.xml', '.rels'];
   for (const [filePath, file] of Object.entries(zip.files)) {
     if (file.dir) continue;
-    if (modifiedFiles.has(filePath)) continue; // Already handled
-
+    if (modifiedFiles.has(filePath)) continue;
     const isXml = xmlExtensions.some(ext => filePath.toLowerCase().endsWith(ext));
     if (isXml) {
-      // Re-add the file with DEFLATE compression
       const data = await file.async('uint8array');
       zip.file(filePath, data, { compression: 'DEFLATE', compressionOptions: { level: 6 } });
     }
-    // Non-XML, non-modified files keep their original compression (STORE by default)
   }
 
-  // Generate output buffer without global compression (per-file settings will apply)
-  const outputBuffer = await zip.generateAsync({
-    type: 'nodebuffer',
-    // Don't set global compression - we've set per-file compression above
-    // This defaults to STORE for files without explicit compression,
-    // but our XML files and modified files have explicit compression settings
-  });
+  const outputBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
   const verification = await verifyPptxBuffer(outputBuffer);
   if (!verification.valid) {

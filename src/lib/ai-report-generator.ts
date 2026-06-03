@@ -1,9 +1,14 @@
-import ZAI from 'z-ai-web-dev-sdk';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { parsePptx } from '@/lib/pptx-parser';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
+import type { LlmProvider, ProviderConfig } from '@/app/api/ai/config/route';
+import { DEFAULT_CONFIG } from '@/app/api/ai/config/route';
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface AiModification {
   slideIndex: number;
@@ -30,6 +35,36 @@ export interface PptxTemplateSummary {
     }[];
   }[];
 }
+
+// ============================================================================
+// Config reading
+// ============================================================================
+
+const CONFIG_PATH = path.join(process.cwd(), '.z-ai-config');
+
+interface FullAiConfig {
+  defaultProvider: LlmProvider;
+  openai: ProviderConfig;
+  anthropic: ProviderConfig;
+}
+
+async function readFullConfig(): Promise<FullAiConfig> {
+  try {
+    const raw = await readFile(CONFIG_PATH, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return {
+      defaultProvider: parsed.defaultProvider || DEFAULT_CONFIG.defaultProvider,
+      openai: { ...DEFAULT_CONFIG.openai, ...parsed.openai },
+      anthropic: { ...DEFAULT_CONFIG.anthropic, ...parsed.anthropic },
+    };
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
+}
+
+// ============================================================================
+// Data source parsing
+// ============================================================================
 
 async function parseDocx(buffer: Buffer): Promise<string> {
   try {
@@ -60,6 +95,10 @@ export async function parseDataSource(buffer: Buffer, fileName: string): Promise
   if (ext === 'xlsx' || ext === 'xls') return parseXlsx(buffer);
   throw new Error(`不支持的数据源文件格式: .${ext}，仅支持 .docx 和 .xlsx`);
 }
+
+// ============================================================================
+// Template parsing
+// ============================================================================
 
 export function buildTemplateSummary(
   slides: { slideNumber: number; elements: { type: string; originalText?: string; rows?: { cells: { text: string }[] }[]; slideIndex: number; elementIndex: number }[] }[]
@@ -96,6 +135,10 @@ export async function readPptxTemplate(fileId: string): Promise<{
   const parseResult = await parsePptx(pptxBuffer, 'template.pptx');
   return { slides: parseResult.slides, fileName: parseResult.fileName };
 }
+
+// ============================================================================
+// LLM calls — provider-specific HTTP implementations
+// ============================================================================
 
 function buildSystemPrompt(): string {
   return `You are a professional report generation assistant. Your task is to intelligently map data from a source document to the appropriate fields in a PPTX template.
@@ -139,6 +182,112 @@ function buildUserPrompt(
   return prompt;
 }
 
+/**
+ * Call OpenAI-compatible Chat Completions API
+ */
+async function callOpenAI(
+  config: ProviderConfig,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`OpenAI API 调用失败 (${response.status}): ${errorText || response.statusText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('OpenAI API 返回了空响应');
+  return content;
+}
+
+/**
+ * Call Anthropic Messages API
+ */
+async function callAnthropic(
+  config: ProviderConfig,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const url = `${config.baseUrl.replace(/\/+$/, '')}/v1/messages`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userPrompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Anthropic API 调用失败 (${response.status}): ${errorText || response.statusText}`);
+  }
+
+  const data = await response.json();
+  // Anthropic returns content as array of blocks
+  const content = data.content?.[0]?.text;
+  if (!content) throw new Error('Anthropic API 返回了空响应');
+  return content;
+}
+
+/**
+ * Call LLM using the specified or default provider
+ */
+async function callLlm(
+  provider: LlmProvider,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const config = await readFullConfig();
+  const providerConfig = config[provider];
+
+  if (!providerConfig.apiKey) {
+    throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API Key 未配置，请在设置中配置`);
+  }
+  if (!providerConfig.baseUrl) {
+    throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} Base URL 未配置，请在设置中配置`);
+  }
+
+  if (provider === 'openai') {
+    return callOpenAI(providerConfig, systemPrompt, userPrompt);
+  } else {
+    return callAnthropic(providerConfig, systemPrompt, userPrompt);
+  }
+}
+
+// ============================================================================
+// Response parsing
+// ============================================================================
+
 function parseLlmResponse(responseContent: string): AiModification[] {
   if (!responseContent || typeof responseContent !== 'string') throw new Error('LLM 返回了空响应');
   let jsonStr = responseContent.trim();
@@ -174,11 +323,16 @@ function parseLlmResponse(responseContent: string): AiModification[] {
   return validModifications;
 }
 
+// ============================================================================
+// Main generation function
+// ============================================================================
+
 export async function generateAiReport(
   fileId: string,
   dataSourceBuffer: Buffer,
   dataSourceFileName: string,
-  customPrompt?: string
+  customPrompt?: string,
+  provider?: LlmProvider
 ): Promise<AiGenerateResult> {
   const documentContent = await parseDataSource(dataSourceBuffer, dataSourceFileName);
   if (!documentContent.trim()) throw new Error('数据源文件内容为空，无法提取有效数据');
@@ -193,22 +347,16 @@ export async function generateAiReport(
   const systemPrompt = buildSystemPrompt();
   const userPrompt = buildUserPrompt(templateSummary, documentContent, customPrompt);
 
-  let zai: InstanceType<typeof ZAI>;
-  try { zai = await ZAI.create(); } catch (err) { throw new Error(`AI 服务初始化失败: ${err instanceof Error ? err.message : '未知错误'}`); }
+  // Determine which provider to use
+  let useProvider: LlmProvider;
+  if (provider) {
+    useProvider = provider;
+  } else {
+    const config = await readFullConfig();
+    useProvider = config.defaultProvider;
+  }
 
-  let completion: { choices?: { message?: { content?: string } }[] };
-  try {
-    completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      thinking: { type: 'disabled' },
-    });
-  } catch (err) { throw new Error(`AI 模型调用失败: ${err instanceof Error ? err.message : '未知错误'}`); }
-
-  const responseContent = completion.choices?.[0]?.message?.content;
-  if (!responseContent) throw new Error('AI 模型返回了空响应，请重试');
+  const responseContent = await callLlm(useProvider, systemPrompt, userPrompt);
 
   const modifications = parseLlmResponse(responseContent);
   const validatedModifications = modifications.filter((mod) => {
@@ -220,7 +368,8 @@ export async function generateAiReport(
 
   const textModCount = validatedModifications.filter((m) => m.type === 'text').length;
   const tableModCount = validatedModifications.filter((m) => m.type === 'table').length;
-  const summary = `已生成 ${validatedModifications.length} 项修改（${textModCount} 个文本字段，${tableModCount} 个表格）`;
+  const providerLabel = useProvider === 'openai' ? 'OpenAI' : 'Anthropic';
+  const summary = `使用 ${providerLabel} 生成 ${validatedModifications.length} 项修改（${textModCount} 个文本字段，${tableModCount} 个表格）`;
 
   return { modifications: validatedModifications, summary };
 }

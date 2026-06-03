@@ -1,6 +1,7 @@
-'use client'
+'use client';
 
-import React from 'react';
+import React, { useCallback } from 'react';
+import { cn } from '@/lib/utils';
 import {
   type PptxElement,
   type PptxTextElement,
@@ -10,17 +11,63 @@ import {
   usePptxStore,
 } from '@/lib/pptx-store';
 import { scrollToElement } from '@/components/slide-editor';
-import { cn } from '@/lib/utils';
+
+// ============================================================================
+// Color scheme — warmer tones
+// ============================================================================
 
 const ELEMENT_COLORS = {
-  text: { border: 'rgba(99, 102, 241, 0.85)', active: 'rgb(99, 102, 241)', activeBg: 'rgba(99, 102, 241, 0.18)', glow: 'rgba(99, 102, 241, 0.35)' },
-  table: { border: 'rgba(16, 185, 129, 0.85)', active: 'rgb(16, 185, 129)', activeBg: 'rgba(16, 185, 129, 0.18)', glow: 'rgba(16, 185, 129, 0.35)' },
-  image: { border: 'rgba(168, 85, 247, 0.85)', active: 'rgb(168, 85, 247)', activeBg: 'rgba(168, 85, 247, 0.18)', glow: 'rgba(168, 85, 247, 0.35)' },
-};
+  text: {
+    border: 'rgba(20, 184, 166, 0.55)',    // teal-500
+    bg: 'rgba(20, 184, 166, 0.07)',
+    hoverBg: 'rgba(20, 184, 166, 0.13)',
+    selectedBorder: 'rgb(20, 184, 166)',
+    glow: 'rgba(20, 184, 166, 0.40)',
+    dot: 'rgb(20, 184, 166)',
+    label: 'teal',
+  },
+  table: {
+    border: 'rgba(16, 185, 129, 0.55)',    // emerald-500
+    bg: 'rgba(16, 185, 129, 0.07)',
+    hoverBg: 'rgba(16, 185, 129, 0.13)',
+    selectedBorder: 'rgb(16, 185, 129)',
+    glow: 'rgba(16, 185, 129, 0.40)',
+    dot: 'rgb(16, 185, 129)',
+    label: 'emerald',
+  },
+  image: {
+    border: 'rgba(139, 92, 246, 0.55)',    // violet-500
+    bg: 'rgba(139, 92, 246, 0.07)',
+    hoverBg: 'rgba(139, 92, 246, 0.13)',
+    selectedBorder: 'rgb(139, 92, 246)',
+    glow: 'rgba(139, 92, 246, 0.40)',
+    dot: 'rgb(139, 92, 246)',
+    label: 'violet',
+  },
+} as const;
+
+type ElementTypeKey = 'text' | 'table' | 'image';
+
+function getElementColors(type: ElementTypeKey) {
+  return ELEMENT_COLORS[type];
+}
+
+// ============================================================================
+// isEmptyElement — background / filler element detection
+// ============================================================================
 
 export function isEmptyElement(el: PptxElement): boolean {
-  if (el.type === 'text') return !el.originalText.trim();
-  if (el.type === 'table') return el.rows.length === 0;
+  // Empty text rectangles
+  if (el.type === 'text') {
+    const text = (el as PptxTextElement).originalText?.trim() ?? '';
+    if (text === '') return true;
+  }
+
+  // Empty tables
+  if (el.type === 'table') {
+    return el.rows.length === 0;
+  }
+
   return false;
 }
 
@@ -30,27 +77,15 @@ function hasPosition(el: PptxElement): boolean {
 
 /**
  * Determine if an element is a "background-style" element that should NOT
- * be rendered as an interactive highlight overlay.
+ * be rendered as an interactive highlight overlay. Two patterns:
  *
- * Two patterns are filtered out:
+ *  1. Full-bleed (>=90% on both axes) empty/no-replacement elements — these
+ *     are full-slide backgrounds (WPS stores them as <p:pic> or empty rects).
+ *  2. Large empty text rects (>=10% on each axis AND area >= 5%) — these
+ *     are the WPS scientific-template card / panel decorations.
  *
- *  1. Full-bleed (>=90% on both axes) elements that are empty / no-replacement.
- *     - Full-bleed image with no replacement: WPS stores the main slide
- *       background as a <p:pic> rather than a slide master.
- *     - Full-bleed empty text rect: a "page background" rect with no text.
- *
- *  2. Decorative empty text rectangles that occupy a large fraction of
- *     the slide (>=10% on each axis AND area >= 5%). These show up heavily
- *     in WPS scientific templates as colored "card" / "panel" backgrounds
- *     (e.g. dark-purple rounded rectangles behind protein models). The
- *     <p:txBody> is empty so they would otherwise render as huge,
- *     clickable dashed-border rectangles that obscure the actual content.
- *     The slide preview image (from pptx-glimpse) already includes these
- *     decorative shapes, so rendering an overlay on top adds no value
- *     and only confuses the user.
- *
- *  Image elements that ARE replacements or images the user is meant to
- *  swap out are NOT filtered (they need to be selectable).
+ * The slide preview image already includes these shapes; rendering an
+ * overlay on top adds no value and only confuses the user.
  */
 function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): boolean {
   if (el.position.width === 0 || el.position.height === 0) return false;
@@ -60,7 +95,6 @@ function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): b
   const isLargeDecor = wPct >= 0.1 && hPct >= 0.1 && (wPct * hPct) >= 0.05;
 
   if (el.type === 'image') {
-    // Full-bleed images with no replacement are background.
     if (coversMostOfSlide) {
       const imgEl = el as PptxImageElement;
       if (!imgEl.replacementImageData) return true;
@@ -69,198 +103,301 @@ function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): b
   }
 
   if (el.type === 'text') {
-    // Empty full-bleed text rectangles are background.
     if (coversMostOfSlide && isEmptyElement(el)) return true;
-    // Large empty decorative rectangles / rounded rectangles / arcs (WPS
-    // scientific-template styling) are background.
     if (isLargeDecor && isEmptyElement(el)) return true;
   }
 
   return false;
 }
 
-function getElementLabel(el: PptxElement): string {
-  if (el.type === 'text') return el.shapeName || '文本框';
-  if (el.type === 'table') return el.shapeName || '表格';
-  return el.shapeName || '图片';
+// ============================================================================
+// Modified-element helper
+// ============================================================================
+
+function isElementModified(el: PptxElement): boolean {
+  if (el.type === 'text') {
+    return (el as PptxTextElement).currentText !== undefined &&
+           (el as PptxTextElement).currentText !== (el as PptxTextElement).originalText;
+  }
+  if (el.type === 'table') {
+    const tableEl = el as PptxTableElement;
+    if (!tableEl.currentRows) return false;
+    for (let ri = 0; ri < tableEl.currentRows.length; ri++) {
+      const origRow = tableEl.rows[ri];
+      const curRow = tableEl.currentRows[ri];
+      if (!origRow || !curRow) continue;
+      for (let ci = 0; ci < curRow.cells.length; ci++) {
+        if (!origRow.cells[ci] || !curRow.cells[ci]) continue;
+        if (curRow.cells[ci].text !== origRow.cells[ci].text) return true;
+      }
+    }
+    return false;
+  }
+  if (el.type === 'image') {
+    return !!(el as PptxImageElement).replacementImageData;
+  }
+  return false;
 }
 
-interface SlidePreviewProps { slide: PptxSlideData; }
+// ============================================================================
+// SlidePreview component
+// ============================================================================
 
-export function SlidePreview({ slide }: SlidePreviewProps) {
+interface SlidePreviewProps {
+  slide: PptxSlideData;
+  className?: string;
+}
+
+export function SlidePreview({ slide, className }: SlidePreviewProps) {
   const { selectedElementId, selectElement, hideEmpty, slideSize } = usePptxStore();
+  const [imageError, setImageError] = React.useState(false);
 
-  // Use the actual slide dimensions from the PPTX file (parsed from presentation.xml)
-  const aspectRatio = slideSize.width / slideSize.height;
+  const { width: slideW, height: slideH } = slideSize;
 
-  // Use percentage-based positioning to avoid pixel scaling errors
-  // This ensures overlay frames align perfectly with the preview image at any size
-  const slideW = slideSize.width;
-  const slideH = slideSize.height;
+  // Filter visible elements (hideEmpty + drop background-style decorations)
+  const visibleElements = (hideEmpty
+    ? slide.elements.filter((el) => !isEmptyElement(el))
+    : slide.elements
+  ).filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH));
 
-  const visibleElements = slide.elements.filter((el) => !(hideEmpty && isEmptyElement(el)));
-  const elementsWithPosition = visibleElements.filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH));
-  // Decorative overlays: show empty decorative rectangles (WPS template card
-  // backgrounds etc.) as a very faint dashed outline so the user can see
-  // the layout, but they are not clickable / selectable.
+  // Decorative overlays: small empty text shapes (WPS template placeholders).
+  // Render as a separate faint dotted layer so the user can see WPS template
+  // placeholder rectangles without confusing them with editable content.
   const decorOverlays = slide.elements.filter((el) => {
-    if (!hideEmpty) return false; // only when "hide empty" is on
+    if (!hideEmpty) return false;
     if (!isEmptyElement(el)) return false;
     if (!hasPosition(el)) return false;
     if (isBackgroundElement(el, slideW, slideH)) return false;
-    // A decorative overlay = a small empty text element (not big enough
-    // to be a background rectangle, not a textbox of interest).
     const wPct = el.position.width / slideW;
     const hPct = el.position.height / slideH;
     return wPct < 0.5 && hPct < 0.5;
   });
-  const hasPreviewImage = !!slide.previewImage;
 
-  const handleDoubleClick = (el: PptxElement) => {
-    selectElement(el.id);
-    setTimeout(() => scrollToElement(el.id), 100);
-  };
+  // Reset error state when slide changes
+  React.useEffect(() => {
+    setImageError(false);
+    // Debug: log preview image status
+    if (slide.previewImage) {
+      console.log(`[SlidePreview] Slide ${slide.slideNumber}: previewImage exists, length=${slide.previewImage.length}, startsWith=${slide.previewImage.substring(0, 30)}`);
+    } else {
+      console.log(`[SlidePreview] Slide ${slide.slideNumber}: NO previewImage`);
+    }
+  }, [slide.slideNumber, slide.previewImage]);
+
+  const handleClick = useCallback(
+    (elementId: string) => {
+      selectElement(elementId);
+    },
+    [selectElement],
+  );
+
+  const handleDoubleClick = useCallback(
+    (elementId: string) => {
+      selectElement(elementId);
+      // Defer scroll so the store has time to update selectedElementId
+      requestAnimationFrame(() => {
+        scrollToElement(elementId);
+      });
+    },
+    [selectElement],
+  );
 
   return (
-    <div className="w-full">
-      <div className="relative w-full rounded-lg border border-border/50 overflow-hidden shadow-lg" style={{ paddingBottom: `${(1 / aspectRatio) * 100}%` }}>
-        <div className="absolute inset-0">
-          {hasPreviewImage && (
-            <img src={slide.previewImage!} alt={`Slide ${slide.slideNumber} preview`} className="absolute inset-0 w-full h-full object-fill" style={{ zIndex: 0 }} />
-          )}
-          {!hasPreviewImage && (
-            <>
-              <div className="absolute inset-0 bg-white" />
-              <div className="absolute inset-0 opacity-[0.04]" style={{
-                backgroundImage: 'linear-gradient(rgba(99, 102, 241, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, 0.3) 1px, transparent 1px)',
-                backgroundSize: `${100 / slideW * 914400}px ${100 / slideH * 914400}px`,
-              }} />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-[10px] text-muted-foreground/30 font-medium">第 {slide.slideNumber} 页 · 无预览截图</span>
-              </div>
-            </>
-          )}
+    <div className={cn('flex flex-col gap-2', className)}>
+      {/* ── Preview container ── */}
+      <div
+        className="relative w-full overflow-hidden rounded-xl border border-border/40 bg-muted/30 shadow-lg shadow-black/5 dark:shadow-black/20"
+        style={{ aspectRatio: `${slideW} / ${slideH}` }}
+      >
+        {/* Preview image or grid fallback */}
+        {slide.previewImage && !imageError ? (
+          <img
+            src={slide.previewImage}
+            alt={`Slide ${slide.slideNumber} preview`}
+            className="h-full w-full object-cover select-none"
+            draggable={false}
+            onError={() => {
+              console.warn(`Preview image failed to load for slide ${slide.slideNumber}, data length: ${slide.previewImage?.length ?? 0}`);
+              setImageError(true);
+            }}
+            onLoad={() => {
+              setImageError(false);
+            }}
+          />
+        ) : (
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `
+                linear-gradient(to right, hsl(var(--border) / 0.25) 1px, transparent 1px),
+                linear-gradient(to bottom, hsl(var(--border) / 0.25) 1px, transparent 1px)
+              `,
+              backgroundSize: '10% 10%',
+            }}
+          />
+        )}
 
-          {/* Decorative (empty) element outlines — very faint, non-interactive.
-              Helps the user see WPS template card / panel decorations without
-              confusing them with editable content. */}
-          {decorOverlays.map((el) => {
-            const leftPct = (el.position.x / slideW) * 100;
-            const topPct = (el.position.y / slideH) * 100;
-            const widthPct = (el.position.width / slideW) * 100;
-            const heightPct = (el.position.height / slideH) * 100;
-            if (widthPct < 0.1 || heightPct < 0.1) return null;
-            return (
-              <div
-                key={`decor-${el.id}`}
-                className="absolute rounded-[2px] pointer-events-none"
-                style={{
-                  left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
-                  border: '1px dotted rgba(120, 120, 120, 0.35)',
-                  backgroundColor: 'transparent',
-                  zIndex: 1,
-                }}
-                title={`${el.shapeName || '\u88c5\u9970\u533a\u57df'} (\u4e0d\u53ef\u7f16\u8f91)`}
-              />
-            );
-          })}
+        {/* Decorative (empty) element outlines — very faint, non-interactive.
+            Helps the user see WPS template card / panel decorations without
+            confusing them with editable content. */}
+        {decorOverlays.map((el) => {
+          const left = (el.position.x / slideW) * 100;
+          const top = (el.position.y / slideH) * 100;
+          const width = (el.position.width / slideW) * 100;
+          const height = (el.position.height / slideH) * 100;
+          if (width < 0.1 || height < 0.1) return null;
+          return (
+            <div
+              key={`decor-${el.id}`}
+              className="pointer-events-none absolute rounded-[2px]"
+              style={{
+                left: `${left}%`,
+                top: `${top}%`,
+                width: `${width}%`,
+                height: `${height}%`,
+                border: '1px dotted rgba(120, 120, 120, 0.35)',
+                backgroundColor: 'transparent',
+                zIndex: 1,
+              }}
+              title={`${el.shapeName || '装饰区域'} (不可编辑)`}
+            />
+          );
+        })}
 
-          {elementsWithPosition.map((el) => {
-            const colors = ELEMENT_COLORS[el.type];
-            const isSelected = selectedElementId === el.id;
-            const isModified = (el.type === 'text' && el.currentText !== undefined && el.currentText !== el.originalText) ||
-              (el.type === 'table' && el.currentRows !== undefined && el.currentRows.some((r, ri) => r.cells.some((c, ci) => c.text !== el.rows[ri]?.cells[ci]?.text))) ||
-              (el.type === 'image' && !!(el as PptxImageElement).replacementImageData);
+        {/* Element overlays */}
+        {visibleElements.map((el) => {
+          const colors = getElementColors(el.type);
+          const isSelected = selectedElementId === el.id;
+          const isModified = isElementModified(el);
 
-            // For image elements with replacement, show the replacement image as thumbnail
-            const imgEl = el.type === 'image' ? (el as PptxImageElement) : null;
-            const replacementThumbnail = imgEl?.replacementImageData
-              ? (imgEl.replacementImageData.startsWith('data:')
-                ? imgEl.replacementImageData
-                : `data:image/${imgEl.replacementImageType || 'png'};base64,${imgEl.replacementImageData}`)
-              : null;
+          // Percentage-based positioning
+          const left = (el.position.x / slideW) * 100;
+          const top = (el.position.y / slideH) * 100;
+          const width = (el.position.width / slideW) * 100;
+          const height = (el.position.height / slideH) * 100;
 
-            // Use percentage-based positioning for accurate alignment
-            const leftPct = (el.position.x / slideW) * 100;
-            const topPct = (el.position.y / slideH) * 100;
-            const widthPct = (el.position.width / slideW) * 100;
-            const heightPct = (el.position.height / slideH) * 100;
-
-            // Skip very small elements
-            if (widthPct < 0.1 || heightPct < 0.1) return null;
-
-            return (
-              <button key={el.id} className="absolute rounded-[2px] transition-all duration-150 cursor-pointer overflow-hidden"
-                style={{
-                  left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%`,
-                  backgroundColor: isSelected ? colors.activeBg : 'transparent',
-                  // Default: dashed colored border so the user can see ALL editable
-                  // regions at a glance. Selected / modified get a solid stronger border.
-                  border: isSelected
-                    ? `2px solid ${colors.active}`
-                    : isModified
-                      ? '2px solid rgba(249, 115, 22, 0.9)'
-                      : `1.5px dashed ${colors.border}`,
-                  boxShadow: isSelected ? `0 0 0 3px ${colors.glow}, 0 0 12px ${colors.glow}` : 'none',
-                  zIndex: isSelected ? 20 : 10,
-                }}
-                onClick={(e) => { e.stopPropagation(); selectElement(el.id); }}
-                onDoubleClick={(e) => { e.stopPropagation(); handleDoubleClick(el); }}
-                onMouseEnter={(e) => {
-                  if (!isSelected) {
-                    e.currentTarget.style.backgroundColor = colors.activeBg;
-                    e.currentTarget.style.border = isModified
-                      ? '2px solid rgba(249, 115, 22, 1)'
-                      : `1.5px solid ${colors.active}`;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isSelected) {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                    e.currentTarget.style.border = isModified
-                      ? '2px solid rgba(249, 115, 22, 0.9)'
-                      : `1.5px dashed ${colors.border}`;
-                  }
-                }}
-                title={`${getElementLabel(el)} (双击跳转编辑)`}
+          return (
+            <div
+              key={el.id}
+              className={cn(
+                'group/overlay absolute cursor-pointer transition-all duration-200 ease-out',
+                'rounded-[3px]',
+              )}
+              style={{
+                left: `${left}%`,
+                top: `${top}%`,
+                width: `${width}%`,
+                height: `${height}%`,
+                backgroundColor: isSelected ? colors.bg : 'transparent',
+                border: isSelected
+                  ? `1.5px solid ${colors.selectedBorder}`
+                  : `1px solid ${colors.border}`,
+                boxShadow: isSelected
+                  ? `0 0 0 2px ${colors.glow}, 0 0 16px ${colors.glow}, inset 0 0 8px ${colors.bg}`
+                  : 'none',
+                zIndex: isSelected ? 10 : 1,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClick(el.id);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                handleDoubleClick(el.id);
+              }}
+              onMouseEnter={(e) => {
+                if (!isSelected) {
+                  (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.hoverBg;
+                  (e.currentTarget as HTMLDivElement).style.borderColor = colors.selectedBorder;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isSelected) {
+                  (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
+                  (e.currentTarget as HTMLDivElement).style.borderColor = colors.border;
+                }
+              }}
+            >
+              {/* Type indicator — top-left corner */}
+              <span
+                className={cn(
+                  'pointer-events-none absolute -left-0.5 -top-0.5 flex items-center justify-center',
+                  'rounded-[3px] px-1 py-[1px] text-[8px] font-semibold leading-none text-white opacity-0',
+                  'transition-opacity duration-150',
+                  isSelected && 'opacity-100',
+                  'group-hover/overlay:opacity-100',
+                )}
+                style={{ backgroundColor: colors.dot }}
               >
-                {/* Show replacement image as thumbnail overlay */}
-                {replacementThumbnail && (
-                  <img
-                    src={replacementThumbnail}
-                    alt="Replaced"
-                    className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none"
+                {el.type === 'text' ? 'T' : el.type === 'table' ? '#' : '🖼'}
+              </span>
+
+              {/* Modified indicator — orange dot */}
+              {isModified && (
+                <span
+                  className="pointer-events-none absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center"
+                >
+                  <span
+                    className="block h-2.5 w-2.5 rounded-full bg-orange-500 shadow-sm"
+                    style={{
+                      boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9), 0 0 6px rgba(249,115,22,0.5)',
+                    }}
                   />
-                )}
-                {isSelected && heightPct > 3 && widthPct > 5 && (
-                  <span className="absolute -top-4 left-0 text-[8px] font-bold px-1 py-px rounded-t whitespace-nowrap shadow-md"
-                    style={{ backgroundColor: colors.active, color: 'white', fontSize: '8px', lineHeight: '12px' }}>
-                    {getElementLabel(el)}
-                  </span>
-                )}
-                {isModified && !isSelected && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-500 shadow-sm" style={{ border: '1px solid white' }} />
-                )}
-              </button>
-            );
-          })}
-        </div>
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Click on empty area deselects */}
+        <div
+          className="absolute inset-0"
+          style={{ zIndex: 0 }}
+          onClick={() => selectElement(null)}
+        />
       </div>
 
-      <div className="flex items-center gap-2 mt-1.5 text-[8px] text-muted-foreground">
-        <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(99, 102, 241, 0.5)', border: '1px solid rgba(99, 102, 241, 0.85)' }} /> 文本
-        </span>
-        <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(16, 185, 129, 0.5)', border: '1px solid rgba(16, 185, 129, 0.85)' }} /> 表格
-        </span>
-        <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: 'rgba(168, 85, 247, 0.5)', border: '1px solid rgba(168, 85, 247, 0.85)' }} /> 图片
-        </span>
-        <span className="flex items-center gap-0.5">
-          <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)', border: '1px solid white' }} /> 已修改
-        </span>
+      {/* ── Legend ── */}
+      <div className="flex items-center justify-center gap-5 text-[11px] text-muted-foreground/80 bg-muted/20 rounded-lg py-1.5 px-3">
+        <LegendItem color={ELEMENT_COLORS.text.dot} label="文本" />
+        <LegendItem color={ELEMENT_COLORS.table.dot} label="表格" />
+        <LegendItem color={ELEMENT_COLORS.image.dot} label="图片" />
+        <LegendItem color="rgb(249, 115, 22)" label="已修改" dotStyle="ring" />
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// Legend item
+// ============================================================================
+
+function LegendItem({
+  color,
+  label,
+  dotStyle = 'solid',
+}: {
+  color: string;
+  label: string;
+  dotStyle?: 'solid' | 'ring';
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {dotStyle === 'solid' ? (
+        <span
+          className="block h-2.5 w-2.5 rounded-[2px]"
+          style={{ backgroundColor: color }}
+        />
+      ) : (
+        <span
+          className="block h-2.5 w-2.5 rounded-full"
+          style={{
+            backgroundColor: color,
+            boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9)',
+          }}
+        />
+      )}
+      <span>{label}</span>
+    </span>
   );
 }

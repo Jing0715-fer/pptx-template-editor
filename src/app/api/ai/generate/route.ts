@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateAiReport } from '@/lib/ai-report-generator';
+import type { LlmProvider } from '@/app/api/ai/config/route';
 
 export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,16 @@ export async function POST(request: Request) {
     const fileId = formData.get('fileId') as string | null;
     const dataSource = formData.get('dataSource') as File | null;
     const prompt = formData.get('prompt') as string | null;
+    const providerStr = formData.get('provider') as string | null;
+
+    // Validate provider
+    let provider: LlmProvider | undefined;
+    if (providerStr) {
+      if (providerStr !== 'openai' && providerStr !== 'anthropic') {
+        return NextResponse.json({ error: '无效的 AI 提供商参数' }, { status: 400 });
+      }
+      provider = providerStr;
+    }
 
     if (!fileId || typeof fileId !== 'string')
       return NextResponse.json({ error: '缺少 fileId 参数' }, { status: 400 });
@@ -40,7 +51,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await dataSource.arrayBuffer();
     const dataSourceBuffer = Buffer.from(arrayBuffer);
 
-    const result = await generateAiReport(fileId, dataSourceBuffer, dataSource.name, prompt || undefined);
+    const result = await generateAiReport(fileId, dataSourceBuffer, dataSource.name, prompt || undefined, provider);
 
     if (result.modifications.length === 0)
       return NextResponse.json({ modifications: [], summary: 'AI 未能从数据源中找到匹配模板字段的内容' });

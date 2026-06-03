@@ -1,31 +1,7 @@
-'use client'
+'use client';
 
-import React from 'react';
-import {
-  type PptxTextElement,
-  type PptxTableElement,
-  type PptxImageElement,
-  type PptxElement,
-  type PptxSlideData,
-  usePptxStore,
-} from '@/lib/pptx-store';
-import { isEmptyElement } from '@/components/slide-preview';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import {
   Copy,
   RotateCcw,
@@ -42,314 +18,241 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
+  type PptxTextElement,
+  type PptxTableElement,
+  type PptxImageElement,
+  type PptxElement,
+  type PptxSlideData,
+  usePptxStore,
+} from '@/lib/pptx-store';
+import { isEmptyElement } from '@/components/slide-preview';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import {
+  Tooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
 
 // ============================================================================
-// Element Ref Registry (for scroll-to-element functionality)
+// Element Ref Registry
 // ============================================================================
 
 const elementRefs = new Map<string, HTMLDivElement>();
 
-export function registerElementRef(id: string, element: HTMLDivElement | null): void {
-  if (element) {
-    elementRefs.set(id, element);
+function registerElementRef(id: string, el: HTMLDivElement | null) {
+  if (el) {
+    elementRefs.set(id, el);
   } else {
     elementRefs.delete(id);
   }
 }
 
-export function scrollToElement(id: string): void {
+function scrollToElement(id: string) {
   const el = elementRefs.get(id);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+    // Brief highlight effect
+    el.classList.add('ring-2', 'ring-primary/50');
     setTimeout(() => {
-      el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+      el.classList.remove('ring-2', 'ring-primary/50');
     }, 1500);
   }
 }
 
 // ============================================================================
-// AnimatedCard wrapper
+// Text Element Editor
 // ============================================================================
 
-function AnimatedCard({
-  children,
-  className,
-  delay = 0,
-  id,
-  ref: refProp,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  delay?: number;
-  id?: string;
-  ref?: React.Ref<HTMLDivElement>;
-}) {
-  return (
-    <motion.div
-      id={id}
-      ref={refProp}
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.25, delay, ease: 'easeOut' }}
-      className={cn('rounded-lg border bg-card text-card-foreground shadow-sm transition-all', className)}
-    >
-      {children}
-    </motion.div>
-  );
+interface TextElementEditorProps {
+  element: PptxTextElement;
+  isExpanded: boolean;
+  onToggle: () => void;
 }
 
-// ============================================================================
-// Font info helper
-// ============================================================================
+function TextElementEditor({ element, isExpanded: _isExpanded, onToggle: _onToggle }: TextElementEditorProps) {
+  const { updateText } = usePptxStore();
+  const [showOriginal, setShowOriginal] = useState(false);
 
-function getFontInfo(el: PptxTextElement): string[] {
-  const info: string[] = [];
-  const fontNames = new Set<string>();
-  const fontSizes = new Set<number>();
-  let hasBold = false;
-  let hasItalic = false;
-
-  for (const para of el.paragraphs) {
-    for (const run of para.runs) {
-      if (run.fontName) fontNames.add(run.fontName);
-      if (run.fontSize) fontSizes.add(run.fontSize);
-      if (run.bold) hasBold = true;
-      if (run.italic) hasItalic = true;
-    }
-  }
-
-  if (fontNames.size > 0) info.push([...fontNames].join(', '));
-  if (fontSizes.size > 0) info.push([...fontSizes].map((s) => `${s}pt`).join(', '));
-  const styles: string[] = [];
-  if (hasBold) styles.push('B');
-  if (hasItalic) styles.push('I');
-  if (styles.length > 0) info.push(styles.join(' '));
-
-  return info;
-}
-
-// ============================================================================
-// TextElementEditor
-// ============================================================================
-
-function TextElementEditor({ element }: { element: PptxTextElement }) {
-  const { updateText, selectElement, selectedElementId } = usePptxStore();
-  const [text, setText] = React.useState(element.currentText ?? element.originalText);
-  const [isExpanded, setIsExpanded] = React.useState(true);
-  const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
-  const isSelected = selectedElementId === element.id;
-
+  const currentText = element.currentText ?? element.originalText;
   const isModified = element.currentText !== undefined && element.currentText !== element.originalText;
-  const fontInfo = getFontInfo(element);
 
-  React.useEffect(() => {
-    setText(element.currentText ?? element.originalText);
-  }, [element.currentText, element.originalText]);
+  const handleTextChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      updateText(element.id, e.target.value);
+    },
+    [updateText, element.id]
+  );
 
-  const handleTextChange = (newText: string) => {
-    setText(newText);
-    updateText(element.id, newText);
-  };
-
-  const handleReset = () => {
-    setText(element.originalText);
+  const handleReset = useCallback(() => {
     updateText(element.id, element.originalText);
-    toast.success('已重置为原始文本');
-  };
+  }, [updateText, element.id, element.originalText]);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(element.originalText);
-      toast.success('已复制原始文本');
+      await navigator.clipboard.writeText(currentText);
     } catch {
-      toast.error('复制失败');
+      // fallback
     }
-  };
-
-  const lineCount = text.split('\n').length;
-  const charCount = text.length;
+  }, [currentText]);
 
   return (
-    <AnimatedCard
-      id={`element-${element.id}`}
+    <Card
       ref={(el) => registerElementRef(element.id, el)}
       className={cn(
-        'overflow-hidden',
-        isSelected && 'ring-2 ring-primary/50',
-        isModified && 'border-orange-300 dark:border-orange-700',
+        'group overflow-hidden transition-all duration-200',
+        'border border-border/60 hover:border-emerald-300/50 dark:hover:border-emerald-700/40 hover:shadow-sm hover:shadow-emerald-500/5',
+        isModified && 'border-amber-300/70 dark:border-amber-600/40 hover:border-amber-400/80 dark:hover:border-amber-500/50'
       )}
     >
-      {/* Header */}
-      <button
-        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-muted/50 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center justify-center w-6 h-6 rounded bg-indigo-100 dark:bg-indigo-900/30 shrink-0">
-          <Type className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+      {/* Row 1: Icon + Name + Modified badge + action buttons */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className={cn(
+          'flex size-6 shrink-0 items-center justify-center rounded-md',
+          'bg-emerald-100 text-emerald-600',
+          'dark:bg-emerald-900/40 dark:text-emerald-400'
+        )}>
+          <Type className="size-3" />
         </div>
-        <div className="flex-1 min-w-0 text-left">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">
-              {element.shapeName || '文本框'}
-            </span>
-            {isModified && (
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 shrink-0">
-                已修改
-              </Badge>
-            )}
-          </div>
-          {fontInfo.length > 0 && (
-            <div className="flex items-center gap-1 mt-0.5">
-              {fontInfo.map((info, i) => (
-                <span key={i} className="text-[10px] text-muted-foreground">
-                  {i > 0 && <span className="mx-0.5">·</span>}
-                  {info}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {isExpanded ? (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          )}
-        </div>
-      </button>
 
-      {/* Content */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="px-4 pb-4 space-y-3">
-              {/* Original text preview */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground">原始文本</label>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={handleCopy}>
-                          <Copy className="w-3 h-3" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>复制原始文本</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-all leading-relaxed">
-                  {element.originalText || <span className="italic text-muted-foreground/50">空文本</span>}
-                </div>
-              </div>
-
-              {/* Edit area */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground">编辑文本</label>
-                  {isModified && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-orange-600 hover:text-orange-700" onClick={handleReset}>
-                            <RotateCcw className="w-3 h-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>重置为原始文本</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                </div>
-                <Textarea
-                  ref={textAreaRef}
-                  value={text}
-                  onChange={(e) => handleTextChange(e.target.value)}
-                  placeholder="输入替换文本..."
-                  className={cn(
-                    'min-h-[80px] text-sm leading-relaxed resize-y',
-                    isModified && 'border-orange-300 focus-visible:ring-orange-300 dark:border-orange-700',
-                  )}
-                  rows={Math.min(Math.max(lineCount + 1, 3), 12)}
-                />
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{charCount} 字符 · {lineCount} 行</span>
-                  {isModified && (
-                    <span className="text-orange-600 dark:text-orange-400">
-                      已修改 {element.currentText!.length - element.originalText.length > 0 ? '+' : ''}
-                      {element.currentText!.length - element.originalText.length} 字符
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Paragraph runs detail */}
-              {element.paragraphs.length > 1 && (
-                <details className="group">
-                  <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors flex items-center gap-1">
-                    <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
-                    段落详情 ({element.paragraphs.length} 段)
-                  </summary>
-                  <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
-                    {element.paragraphs.map((para, pi) => (
-                      <div key={pi} className="text-[10px] bg-muted/30 rounded p-2">
-                        <div className="flex items-center gap-1 mb-1 text-muted-foreground">
-                          <span>段落 {pi + 1}</span>
-                          {para.runs.length > 1 && <span>· {para.runs.length} 个文本段</span>}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {para.runs.map((run, ri) => (
-                            <span
-                              key={ri}
-                              className={cn(
-                                'inline-block px-1 py-0.5 rounded text-[9px] border',
-                                run.bold && 'font-bold',
-                                run.italic && 'italic',
-                                'bg-background border-border',
-                              )}
-                              style={run.fontColor ? { color: `#${run.fontColor}` } : undefined}
-                            >
-                              {run.originalText || '(空)'}
-                              {run.fontSize && <span className="ml-0.5 opacity-50">{run.fontSize}pt</span>}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
+        <div className="flex-1 min-w-0 flex items-center gap-1.5">
+          <span className="text-xs font-medium truncate">{element.shapeName}</span>
+          {isModified && (
+            <Badge
+              className={cn(
+                'shrink-0 rounded-full px-1 py-0 h-3.5 text-[9px] font-semibold',
+                'bg-amber-100 text-amber-700 border-amber-200/60',
+                'dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700/40'
               )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </AnimatedCard>
+            >
+              Modified
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center gap-0.5 shrink-0">
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 text-muted-foreground hover:text-foreground"
+                  onClick={handleCopy}
+                >
+                  <Copy className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Copy text</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {isModified && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      'size-6',
+                      'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
+                    )}
+                    onClick={handleReset}
+                  >
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Reset to original</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+      </div>
+
+      {/* Row 2: Inline textarea (always visible) */}
+      <div className="px-3 pb-2">
+        <Textarea
+          value={currentText}
+          onChange={handleTextChange}
+          rows={2}
+          className={cn(
+            'resize-y text-xs leading-relaxed',
+            'focus-visible:ring-emerald-500/30',
+            isModified && 'border-amber-300/70 dark:border-amber-600/40'
+          )}
+        />
+      </div>
+
+      {/* Show Original toggle + display */}
+      <div className="px-3 pb-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-5 gap-1 text-[10px] text-muted-foreground hover:text-foreground px-1"
+          onClick={() => setShowOriginal((v) => !v)}
+        >
+          <FileText className="size-2.5" />
+          {showOriginal ? 'Hide Original' : 'Show Original'}
+        </Button>
+
+        <AnimatePresence>
+          {showOriginal && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className={cn(
+                'rounded-md border p-2 text-[11px] leading-relaxed mt-1',
+                'bg-muted/40 border-border/50 text-muted-foreground'
+              )}>
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/70 block mb-1">
+                  Original
+                </span>
+                {element.originalText || <span className="italic opacity-50">Empty</span>}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </Card>
   );
 }
 
 // ============================================================================
-// TableElementEditor
+// Table Element Editor
 // ============================================================================
 
-function TableElementEditor({ element }: { element: PptxTableElement }) {
-  const { updateTableCell, selectElement, selectedElementId } = usePptxStore();
-  const [isExpanded, setIsExpanded] = React.useState(true);
-  const isSelected = selectedElementId === element.id;
+interface TableElementEditorProps {
+  element: PptxTableElement;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+function TableElementEditor({ element, isExpanded, onToggle }: TableElementEditorProps) {
+  const { updateTableCell } = usePptxStore();
+  const [showOriginal, setShowOriginal] = useState(false);
 
   const currentRows = element.currentRows ?? element.rows;
-  const isModified =
-    element.currentRows !== undefined &&
-    element.currentRows.some((r, ri) =>
-      r.cells.some((c, ci) => c.text !== element.rows[ri]?.cells[ci]?.text)
-    );
+  const isModified = element.currentRows !== undefined;
 
-  const modifiedCellCount = React.useMemo(() => {
+  // Count modified cells
+  const modifiedCellCount = useMemo(() => {
     if (!element.currentRows) return 0;
     let count = 0;
     for (let ri = 0; ri < element.currentRows.length; ri++) {
@@ -357,592 +260,896 @@ function TableElementEditor({ element }: { element: PptxTableElement }) {
       const curRow = element.currentRows[ri];
       if (!origRow || !curRow) continue;
       for (let ci = 0; ci < curRow.cells.length; ci++) {
-        if (curRow.cells[ci]?.text !== origRow.cells[ci]?.text) count++;
+        const origCell = origRow.cells[ci];
+        const curCell = curRow.cells[ci];
+        if (!origCell || !curCell) continue;
+        if (curCell.text !== origCell.text) count++;
       }
     }
     return count;
   }, [element.currentRows, element.rows]);
 
-  const handleCellChange = (row: number, col: number, text: string) => {
-    updateTableCell(element.id, row, col, text);
-  };
+  const totalCells = useMemo(
+    () => element.rows.reduce((sum, row) => sum + row.cells.length, 0),
+    [element.rows]
+  );
 
-  const handleReset = () => {
+  const handleCellChange = useCallback(
+    (rowIndex: number, colIndex: number, text: string) => {
+      updateTableCell(element.id, rowIndex, colIndex, text);
+    },
+    [updateTableCell, element.id]
+  );
+
+  const handleReset = useCallback(() => {
+    // Reset by re-applying original values
     for (let ri = 0; ri < element.rows.length; ri++) {
       for (let ci = 0; ci < element.rows[ri].cells.length; ci++) {
-        updateTableCell(element.id, ri, ci, element.rows[ri].cells[ci].text);
+        const origText = element.rows[ri].cells[ci].text;
+        const curText = currentRows[ri]?.cells[ci]?.text;
+        if (curText !== origText) {
+          updateTableCell(element.id, ri, ci, origText);
+        }
       }
     }
-    toast.success('已重置表格为原始数据');
-  };
+  }, [element.id, element.rows, currentRows, updateTableCell]);
 
-  const handleCopyTable = async () => {
+  const handleCopyTable = useCallback(async () => {
+    const text = currentRows
+      .map((row) => row.cells.map((cell) => cell.text).join('\t'))
+      .join('\n');
     try {
-      const tsv = element.rows
-        .map((r) => r.cells.map((c) => c.text).join('\t'))
-        .join('\n');
-      await navigator.clipboard.writeText(tsv);
-      toast.success('已复制表格数据');
+      await navigator.clipboard.writeText(text);
     } catch {
-      toast.error('复制失败');
+      // fallback
     }
-  };
+  }, [currentRows]);
 
-  const maxCols = Math.max(...currentRows.map((r) => r.cells.length));
+  const isCellModified = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      if (!element.currentRows) return false;
+      const origCell = element.rows[rowIndex]?.cells[colIndex];
+      const curCell = element.currentRows[rowIndex]?.cells[colIndex];
+      if (!origCell || !curCell) return false;
+      return curCell.text !== origCell.text;
+    },
+    [element.currentRows, element.rows]
+  );
 
   return (
-    <AnimatedCard
-      id={`element-${element.id}`}
+    <Card
       ref={(el) => registerElementRef(element.id, el)}
       className={cn(
-        'overflow-hidden',
-        isSelected && 'ring-2 ring-emerald-500/50',
-        isModified && 'border-orange-300 dark:border-orange-700',
+        'group overflow-hidden transition-all duration-200',
+        'border border-border/60 hover:border-emerald-300/50 dark:hover:border-emerald-700/40 hover:shadow-sm hover:shadow-emerald-500/5',
+        isModified && 'border-amber-300/70 dark:border-amber-600/40 hover:border-amber-400/80 dark:hover:border-amber-500/50',
+        isExpanded && 'shadow-sm shadow-emerald-500/5'
       )}
     >
       {/* Header */}
       <button
-        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-muted/50 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
       >
-        <div className="flex items-center justify-center w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-900/30 shrink-0">
-          <Table2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+        <div className={cn(
+          'flex size-8 shrink-0 items-center justify-center rounded-lg',
+          'bg-amber-100 text-amber-600',
+          'dark:bg-amber-900/40 dark:text-amber-400'
+        )}>
+          <Table2 className="size-4" />
         </div>
-        <div className="flex-1 min-w-0 text-left">
+
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">
-              {element.shapeName || '表格'}
-            </span>
+            <span className="text-sm font-medium truncate">{element.shapeName}</span>
             {isModified && (
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 shrink-0">
-                {modifiedCellCount} 处修改
+              <Badge
+                className={cn(
+                  'shrink-0 rounded-full px-1.5 py-0 h-4 text-[10px] font-semibold',
+                  'bg-amber-100 text-amber-700 border-amber-200/60',
+                  'dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700/40'
+                )}
+              >
+                {modifiedCellCount} cell{modifiedCellCount !== 1 ? 's' : ''}
               </Badge>
             )}
           </div>
-          <span className="text-[10px] text-muted-foreground">
-            {currentRows.length} 行 × {maxCols} 列
-          </span>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">
+            {element.rows.length} × {element.rows[0]?.cells.length ?? 0} · {totalCells} cells
+          </p>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {isExpanded ? (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          )}
-        </div>
+
+        <motion.div
+          animate={{ rotate: isExpanded ? 0 : -90 }}
+          transition={{ duration: 0.2 }}
+          className="shrink-0 text-muted-foreground"
+        >
+          <ChevronDown className="size-4" />
+        </motion.div>
       </button>
 
-      {/* Content */}
-      <AnimatePresence>
+      {/* Expandable content */}
+      <AnimatePresence initial={false}>
         {isExpanded && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
           >
             <div className="px-4 pb-4 space-y-3">
+              <Separator className="opacity-50" />
+
               {/* Action buttons */}
-              <div className="flex items-center gap-2">
-                <TooltipProvider>
+              <div className="flex items-center gap-1.5">
+                <TooltipProvider delayDuration={300}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleCopyTable}>
-                        <Copy className="w-3 h-3 mr-1" /> 复制
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={handleCopyTable}
+                      >
+                        <Copy className="size-3" />
+                        Copy Table
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>复制为 TSV 格式</TooltipContent>
+                    <TooltipContent side="bottom">
+                      <p>Copy table content as tab-separated text</p>
+                    </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowOriginal((v) => !v)}
+                      >
+                        <FileText className="size-3" />
+                        {showOriginal ? 'Hide Original' : 'Show Original'}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Toggle original table display</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 {isModified && (
-                  <TooltipProvider>
+                  <TooltipProvider delayDuration={300}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-7 text-xs text-orange-600 hover:text-orange-700" onClick={handleReset}>
-                          <RotateCcw className="w-3 h-3 mr-1" /> 重置
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 gap-1.5 text-xs',
+                            'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
+                          )}
+                          onClick={handleReset}
+                        >
+                          <RotateCcw className="size-3" />
+                          Reset
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>重置表格为原始数据</TooltipContent>
+                      <TooltipContent side="bottom">
+                        <p>Reset all cells to original</p>
+                      </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 )}
               </div>
 
-              {/* Table grid */}
-              <div className="overflow-x-auto rounded border">
+              {/* Editable table grid */}
+              <div className="overflow-x-auto custom-scrollbar rounded-lg border border-border/50">
                 <table className="w-full text-xs border-collapse">
                   <tbody>
-                    {currentRows.map((row, ri) => {
-                      const origRow = element.rows[ri];
-                      return (
-                        <tr key={ri} className={ri % 2 === 0 ? 'bg-muted/30' : ''}>
-                          <td className="px-2 py-1 text-muted-foreground text-[10px] text-center border-r bg-muted/50 font-medium w-8">
-                            {ri + 1}
-                          </td>
-                          {row.cells.map((cell, ci) => {
-                            const origCell = origRow?.cells[ci];
-                            const cellModified = origCell && cell.text !== origCell.text;
-                            return (
-                              <td key={ci} className="border-r last:border-r-0 p-0">
-                                <input
-                                  type="text"
-                                  value={cell.text}
-                                  onChange={(e) => handleCellChange(ri, ci, e.target.value)}
-                                  className={cn(
-                                    'w-full px-2 py-1.5 text-xs bg-transparent outline-none',
-                                    'focus:bg-background focus:ring-1 focus:ring-emerald-400',
-                                    cellModified && 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-300',
-                                  )}
-                                  placeholder="..."
-                                />
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
+                    {currentRows.map((row, ri) => (
+                      <tr key={ri} className="border-b border-border/30 last:border-b-0">
+                        {row.cells.map((cell, ci) => {
+                          const cellModified = isCellModified(ri, ci);
+                          return (
+                            <td
+                              key={ci}
+                              className={cn(
+                                'border-r border-border/30 last:border-r-0 p-0',
+                                cellModified && 'bg-amber-50/80 dark:bg-amber-900/20'
+                              )}
+                              style={{
+                                rowSpan: cell.rowSpan > 1 ? cell.rowSpan : undefined,
+                                colSpan: cell.colSpan > 1 ? cell.colSpan : undefined,
+                              }}
+                            >
+                              <input
+                                type="text"
+                                value={cell.text}
+                                onChange={(e) => handleCellChange(ri, ci, e.target.value)}
+                                className={cn(
+                                  'w-full px-2 py-1.5 text-xs bg-transparent outline-none',
+                                  'placeholder:text-muted-foreground/40',
+                                  'focus:bg-accent/30 transition-colors',
+                                  cellModified && 'text-amber-700 dark:text-amber-300'
+                                )}
+                                placeholder="—"
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Original table toggle */}
-              <details className="group">
-                <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors flex items-center gap-1">
-                  <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
-                  查看原始表格数据
-                </summary>
-                <div className="mt-2 overflow-x-auto rounded border">
-                  <table className="w-full text-[10px] border-collapse">
-                    <tbody>
-                      {element.rows.map((row, ri) => (
-                        <tr key={ri} className={ri % 2 === 0 ? 'bg-muted/20' : ''}>
-                          {row.cells.map((cell, ci) => (
-                            <td key={ci} className="border px-2 py-1 text-muted-foreground">
-                              {cell.text || <span className="italic opacity-50">空</span>}
-                            </td>
+              {/* Original table display */}
+              <AnimatePresence>
+                {showOriginal && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="overflow-x-auto custom-scrollbar rounded-lg border border-border/50">
+                      <table className="w-full text-xs border-collapse">
+                        <tbody>
+                          {element.rows.map((row, ri) => (
+                            <tr key={ri} className="border-b border-border/30 last:border-b-0">
+                              {row.cells.map((cell, ci) => (
+                                <td
+                                  key={ci}
+                                  className="border-r border-border/30 last:border-r-0 px-2 py-1.5 text-muted-foreground"
+                                  style={{
+                                    rowSpan: cell.rowSpan > 1 ? cell.rowSpan : undefined,
+                                    colSpan: cell.colSpan > 1 ? cell.colSpan : undefined,
+                                  }}
+                                >
+                                  {cell.text || <span className="italic opacity-40">—</span>}
+                                </td>
+                              ))}
+                            </tr>
                           ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
+                        </tbody>
+                      </table>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 block mt-2">
+                      Original Table
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </AnimatedCard>
+    </Card>
   );
 }
 
 // ============================================================================
-// ImageElementDisplay
+// Image Element Display
 // ============================================================================
 
-function ImageElementDisplay({ element }: { element: PptxImageElement }) {
-  const { updateImage, removeImage, selectedElementId } = usePptxStore();
-  const [isExpanded, setIsExpanded] = React.useState(true);
-  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
-  const [isZoomed, setIsZoomed] = React.useState(false);
-  const [imageError, setImageError] = React.useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const isSelected = selectedElementId === element.id;
+interface ImageElementDisplayProps {
+  element: PptxImageElement;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+function ImageElementDisplay({ element, isExpanded, onToggle }: ImageElementDisplayProps) {
+  const { updateImage, removeImage } = usePptxStore();
+  const [isZoomed, setIsZoomed] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const isModified = !!element.replacementImageData;
+  const isEmfOrWmf = /emf|wmf/i.test(element.imageType);
 
-  // Determine if the original image format is browser-displayable
-  const isBrowserDisplayable = React.useMemo(() => {
-    const nonDisplayableTypes = ['emf', 'wmf', 'tiff', 'tif'];
-    return !nonDisplayableTypes.includes(element.imageType.toLowerCase());
-  }, [element.imageType]);
+  const imageDataUrl = useMemo(() => {
+    // Helper to ensure imageType is a proper MIME type
+    const toMimeType = (t: string | undefined): string => {
+      if (!t) return 'image/png';
+      if (t.includes('/')) return t; // Already a MIME type like "image/png"
+      const extMap: Record<string, string> = {
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml',
+        tiff: 'image/tiff', tif: 'image/tiff', emf: 'image/x-emf', wmf: 'image/x-wmf',
+        webp: 'image/webp',
+      };
+      return extMap[t.toLowerCase()] || `image/${t.toLowerCase()}`;
+    };
 
-  // Memoize the preview URL computation to avoid unnecessary re-renders
-  const computedPreviewUrl = React.useMemo(() => {
+    // Helper: if data already contains a full data URL, return as-is; otherwise build one
+    const buildDataUrl = (data: string | null | undefined, type: string | undefined): string | null => {
+      if (!data) return null;
+      // Already a full data URL (backward compat / edge case)
+      if (data.startsWith('data:')) return data;
+      const mime = toMimeType(type);
+      return `data:${mime};base64,${data}`;
+    };
+
     if (element.replacementImageData) {
-      // replacementImageData may be a full data URL or raw base64
-      if (element.replacementImageData.startsWith('data:')) {
-        // Already a complete data URL (from FileReader.readAsDataURL)
-        return element.replacementImageData;
-      } else {
-        // Raw base64, needs data URL prefix
-        const type = element.replacementImageType || 'png';
-        const mime = type === 'jpg' || type === 'jpeg' ? 'jpeg' : type;
-        return `data:image/${mime};base64,${element.replacementImageData}`;
-      }
-    } else if (element.imageData) {
-      // imageData from server already includes data URL prefix
-      // Check if the MIME type is displayable in browsers
-      if (element.imageData.startsWith('data:image/x-emf') || element.imageData.startsWith('data:image/x-wmf')) {
-        // EMF/WMF images can't be displayed in browsers
-        return null;
-      }
-      return element.imageData;
+      return buildDataUrl(element.replacementImageData, element.replacementImageType);
+    }
+    if (element.imageData) {
+      return buildDataUrl(element.imageData, element.imageType);
     }
     return null;
-  }, [element.replacementImageData, element.replacementImageType, element.imageData]);
+  }, [element.replacementImageData, element.replacementImageType, element.imageData, element.imageType]);
 
-  React.useEffect(() => {
-    setPreviewUrl(computedPreviewUrl);
-    setImageError(false);
-  }, [computedPreviewUrl]);
+  const handleReplaceImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('请选择图片文件');
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('图片文件大小不能超过 10MB');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const base64DataUrl = ev.target?.result as string;
-      if (!base64DataUrl) {
-        toast.error('图片读取失败');
-        return;
-      }
-      // Determine image type from MIME type in data URL (more reliable than file extension)
-      const mimeMatch = base64DataUrl.match(/data:image\/([a-z+]+)/);
-      const detectedType = mimeMatch ? mimeMatch[1].replace('+xml', '') : 'png';
-      const typeMap: Record<string, string> = {
-        png: 'png', jpeg: 'jpeg', jpg: 'jpeg', gif: 'gif', bmp: 'bmp',
-        webp: 'webp', svg: 'svg', 'svg+xml': 'svg',
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        const mimeType = file.type || 'image/png';
+        updateImage(element.id, base64, mimeType);
       };
-      const imageType = typeMap[detectedType] || 'png';
-      updateImage(element.id, base64DataUrl, imageType);
-      toast.success('图片已替换');
-    };
-    reader.onerror = () => {
-      toast.error('图片读取失败，请重试');
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
 
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+      // Reset input so the same file can be selected again
+      e.target.value = '';
+    },
+    [updateImage, element.id]
+  );
 
-  const handleRemoveReplacement = () => {
+  const handleRemoveReplacement = useCallback(() => {
     removeImage(element.id);
-    toast.success('已恢复原始图片');
-  };
+  }, [removeImage, element.id]);
 
   return (
-    <AnimatedCard
-      id={`element-${element.id}`}
+    <Card
       ref={(el) => registerElementRef(element.id, el)}
       className={cn(
-        'overflow-hidden',
-        isSelected && 'ring-2 ring-purple-500/50',
-        isModified && 'border-orange-300 dark:border-orange-700',
+        'group overflow-hidden transition-all duration-200',
+        'border border-border/60 hover:border-emerald-300/50 dark:hover:border-emerald-700/40 hover:shadow-sm hover:shadow-emerald-500/5',
+        isModified && 'border-amber-300/70 dark:border-amber-600/40 hover:border-amber-400/80 dark:hover:border-amber-500/50',
+        isExpanded && 'shadow-sm shadow-emerald-500/5'
       )}
     >
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       {/* Header */}
       <button
-        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-muted/50 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
       >
-        <div className="flex items-center justify-center w-6 h-6 rounded bg-purple-100 dark:bg-purple-900/30 shrink-0">
-          <ImageIcon className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+        <div className={cn(
+          'size-8 shrink-0 rounded-lg overflow-hidden',
+          !imageDataUrl && 'flex items-center justify-center bg-cyan-100 text-cyan-600 dark:bg-cyan-900/40 dark:text-cyan-400'
+        )}>
+          {imageDataUrl ? (
+            <img
+              src={imageDataUrl}
+              alt={element.imageName}
+              className="object-cover w-full h-full"
+            />
+          ) : (
+            <ImageIcon className="size-4" />
+          )}
         </div>
-        <div className="flex-1 min-w-0 text-left">
+
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">
-              {element.shapeName || '图片'}
-            </span>
+            <span className="text-sm font-medium truncate">{element.shapeName}</span>
             {isModified && (
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 shrink-0">
-                已替换
+              <Badge
+                className={cn(
+                  'shrink-0 rounded-full px-1.5 py-0 h-4 text-[10px] font-semibold',
+                  'bg-amber-100 text-amber-700 border-amber-200/60',
+                  'dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700/40'
+                )}
+              >
+                Replaced
               </Badge>
             )}
           </div>
-          <span className="text-[10px] text-muted-foreground">
-            {element.imageName || '未命名图片'} · {element.imageType.toUpperCase()}
-          </span>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">
+            {element.imageName}
+          </p>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {isExpanded ? (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          )}
-        </div>
+
+        <motion.div
+          animate={{ rotate: isExpanded ? 0 : -90 }}
+          transition={{ duration: 0.2 }}
+          className="shrink-0 text-muted-foreground"
+        >
+          <ChevronDown className="size-4" />
+        </motion.div>
       </button>
 
-      {/* Content */}
-      <AnimatePresence>
+      {/* Expandable content */}
+      <AnimatePresence initial={false}>
         {isExpanded && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
           >
             <div className="px-4 pb-4 space-y-3">
+              <Separator className="opacity-50" />
+
               {/* Image preview */}
-              <div className="relative group rounded-md overflow-hidden border bg-muted/30 flex items-center justify-center min-h-[100px]">
-                {previewUrl && !imageError ? (
-                  <>
-                    <img
-                      src={previewUrl}
-                      alt={element.imageName || 'Image'}
-                      className="max-w-full max-h-48 object-contain cursor-pointer"
-                      onClick={() => setIsZoomed(true)}
-                      onError={() => {
-                        console.error('Image preview failed to load, URL prefix:', previewUrl?.substring(0, 60));
-                        setImageError(true);
-                      }}
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="absolute top-2 right-2 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => setIsZoomed(true)}
-                    >
-                      <ZoomIn className="w-3.5 h-3.5" />
-                    </Button>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
-                    <ImageIcon className="w-8 h-8 opacity-30" />
-                    <span className="text-xs">
-                      {imageError && isModified
-                        ? '替换图片加载失败'
-                        : imageError
-                        ? '图片加载失败'
-                        : !isBrowserDisplayable
-                        ? `${element.imageType.toUpperCase()} 格式无法预览`
-                        : '无法预览此图片'}
-                    </span>
-                    {!isBrowserDisplayable && !isModified && (
-                      <span className="text-[10px] text-orange-500">请替换为 PNG/JPEG 格式</span>
-                    )}
-                    {imageError && isModified && (
-                      <span className="text-[10px] text-orange-500">替换图片数据可能已损坏</span>
-                    )}
-                  </div>
-                )}
-                {isModified && !imageError && (
-                  <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-500 text-white shadow-sm">
-                    已替换
-                  </div>
-                )}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                  Preview
+                </span>
+                <div
+                  className={cn(
+                    'relative group/img overflow-hidden rounded-lg border border-border/50',
+                    'bg-muted/20'
+                  )}
+                >
+                  {imageDataUrl ? (
+                    <>
+                      <img
+                        src={imageDataUrl}
+                        alt={element.imageName}
+                        className={cn(
+                          'w-full object-contain transition-transform duration-300',
+                          isZoomed ? 'max-h-none scale-150 cursor-zoom-out' : 'max-h-52 cursor-zoom-in'
+                        )}
+                        onClick={() => setIsZoomed((z) => !z)}
+                      />
+                      <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="secondary"
+                                size="icon"
+                                className="size-7 shadow-sm"
+                                onClick={() => setIsZoomed((z) => !z)}
+                              >
+                                <ZoomIn className="size-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left">
+                              <p>{isZoomed ? 'Zoom out' : 'Zoom in'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </>
+                  ) : isEmfOrWmf ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                      <ImageIcon className="size-8 mb-2 opacity-30" />
+                      <span className="text-xs">
+                        EMF/WMF format — preview unavailable
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                      <ImageIcon className="size-8 mb-2 opacity-30" />
+                      <span className="text-xs">No preview available</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleFileSelect}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="w-3 h-3 mr-1" /> 替换图片
-                </Button>
+              {/* Action buttons */}
+              <div className="flex items-center gap-1.5">
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs"
+                        onClick={handleReplaceImage}
+                      >
+                        <Upload className="size-3" />
+                        Replace Image
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Upload a replacement image</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 {isModified && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs text-orange-600 hover:text-orange-700"
-                    onClick={handleRemoveReplacement}
-                  >
-                    <RotateCcw className="w-3 h-3 mr-1" /> 恢复原图
-                  </Button>
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 gap-1.5 text-xs',
+                            'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
+                          )}
+                          onClick={handleRemoveReplacement}
+                        >
+                          <X className="size-3" />
+                          Remove Replacement
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p>Revert to original image</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
               </div>
 
               {/* Image info */}
-              <div className="text-[10px] text-muted-foreground space-y-0.5">
-                <div className="flex justify-between">
-                  <span>文件名</span>
-                  <span className="font-mono">{element.imageName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>格式</span>
-                  <span className="font-mono">{element.imageType.toUpperCase()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>引用 ID</span>
-                  <span className="font-mono">{element.imageRid}</span>
+              <div className={cn(
+                'rounded-lg border p-3 space-y-1',
+                'bg-muted/30 border-border/40'
+              )}>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 block mb-1.5">
+                  Image Info
+                </span>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <span className="text-muted-foreground">Name</span>
+                  <span className="truncate font-medium">{element.imageName}</span>
+                  <span className="text-muted-foreground">Format</span>
+                  <span className="font-medium">{element.imageType || 'Unknown'}</span>
+                  <span className="text-muted-foreground">Size</span>
+                  <span className="font-medium">
+                    {element.position.width > 0
+                      ? `${Math.round(element.position.width / 914400)}" × ${Math.round(element.position.height / 914400)}"`
+                      : 'N/A'}
+                  </span>
+                  {isEmfOrWmf && (
+                    <>
+                      <span className="text-muted-foreground">Note</span>
+                      <span className="font-medium text-amber-600 dark:text-amber-400">
+                        Vector format
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Zoom dialog */}
-      {isZoomed && previewUrl && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setIsZoomed(false)}
-        >
-          <div className="relative max-w-[90vw] max-h-[90vh]">
-            <img
-              src={previewUrl}
-              alt={element.imageName || 'Image'}
-              className="max-w-full max-h-[85vh] object-contain rounded-lg"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              className="absolute -top-3 -right-3 h-8 w-8 rounded-full p-0"
-              onClick={() => setIsZoomed(false)}
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-    </AnimatedCard>
+    </Card>
   );
 }
 
 // ============================================================================
-// EmptyState
+// Section Header
 // ============================================================================
 
-function EmptyState() {
+interface SectionHeaderProps {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  accentClass?: string;
+}
+
+function SectionHeader({ icon, title, count, accentClass }: SectionHeaderProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-        <MousePointerClick className="w-8 h-8 text-muted-foreground/40" />
+    <div className="flex items-center gap-2.5 py-2.5 px-1">
+      <div className={cn(
+        'flex size-5 items-center justify-center rounded-md shrink-0 shadow-sm',
+        accentClass ?? 'bg-muted text-muted-foreground'
+      )}>
+        {icon}
       </div>
-      <h3 className="text-sm font-medium text-muted-foreground mb-1">选择元素进行编辑</h3>
-      <p className="text-xs text-muted-foreground/60 max-w-[240px]">
-        点击左侧预览图上的元素，或滚动浏览下方所有可编辑元素
-      </p>
+      <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70">
+        {title}
+      </span>
+      <Badge
+        variant="secondary"
+        className="h-4 px-1.5 text-[10px] font-medium shadow-sm"
+      >
+        {count}
+      </Badge>
+      <div className="flex-1 h-px bg-gradient-to-r from-border/40 via-border/20 to-transparent" />
     </div>
   );
 }
 
 // ============================================================================
-// SlideEditor (main component)
+// Slide Editor (Main Component)
 // ============================================================================
 
 interface SlideEditorProps {
   slide: PptxSlideData;
 }
 
-export function SlideEditor({ slide }: SlideEditorProps) {
-  const { hideEmpty, selectElement, selectedElementId } = usePptxStore();
-  const scrollRef = React.useRef<HTMLDivElement>(null);
+export default function SlideEditor({ slide }: SlideEditorProps) {
+  const {
+    updateText,
+    updateTableCell,
+    updateImage,
+    removeImage,
+    selectElement,
+    selectedElementId,
+    hideEmpty,
+  } = usePptxStore();
 
-  const visibleElements = slide.elements.filter((el) => !(hideEmpty && isEmptyElement(el)));
+  const [manuallyExpandedIds, setManuallyExpandedIds] = useState<Set<string>>(new Set());
 
-  const textElements = visibleElements.filter((el): el is PptxTextElement => el.type === 'text');
-  const tableElements = visibleElements.filter((el): el is PptxTableElement => el.type === 'table');
-  const imageElements = visibleElements.filter((el): el is PptxImageElement => el.type === 'image');
-
-  const selectedElement = visibleElements.find((el) => el.id === selectedElementId);
-
-  // Scroll to selected element when it changes
-  React.useEffect(() => {
+  // Compute effective expanded set: manually expanded + auto-expanded selected element
+  const expandedIds = useMemo(() => {
+    const ids = new Set(manuallyExpandedIds);
     if (selectedElementId) {
-      const timer = setTimeout(() => scrollToElement(selectedElementId), 50);
-      return () => clearTimeout(timer);
+      ids.add(selectedElementId);
     }
-  }, [selectedElementId]);
+    return ids;
+  }, [manuallyExpandedIds, selectedElementId]);
+
+  const toggleExpand = useCallback((id: string) => {
+    setManuallyExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  // Categorize elements
+  const { selectedElements, textElements, tableElements, imageElements, visibleElements } = useMemo(() => {
+    const selected: PptxElement[] = [];
+    const text: PptxTextElement[] = [];
+    const table: PptxTableElement[] = [];
+    const image: PptxImageElement[] = [];
+
+    for (const el of slide.elements) {
+      if (hideEmpty && isEmptyElement(el)) continue;
+
+      if (selectedElementId === el.id) {
+        selected.push(el);
+      }
+
+      switch (el.type) {
+        case 'text':
+          text.push(el);
+          break;
+        case 'table':
+          table.push(el);
+          break;
+        case 'image':
+          image.push(el);
+          break;
+      }
+    }
+
+    const visible = [...text, ...table, ...image];
+
+    return {
+      selectedElements: selected,
+      textElements: text,
+      tableElements: table,
+      imageElements: image,
+      visibleElements: visible,
+    };
+  }, [slide.elements, hideEmpty, selectedElementId]);
+
+  // Total counts
+  const totalText = textElements.length;
+  const totalTable = tableElements.length;
+  const totalImage = imageElements.length;
+  const totalAll = totalText + totalTable + totalImage;
+
+  // Modification count for this slide
+  const modCount = useMemo(() => {
+    let count = 0;
+    for (const el of slide.elements) {
+      if (el.type === 'text' && el.currentText !== undefined && el.currentText !== el.originalText) count++;
+      else if (el.type === 'table' && el.currentRows) {
+        for (let ri = 0; ri < el.currentRows.length; ri++) {
+          const origRow = el.rows[ri];
+          const curRow = el.currentRows[ri];
+          if (!origRow || !curRow) continue;
+          for (let ci = 0; ci < curRow.cells.length; ci++) {
+            if (!origRow.cells[ci] || !curRow.cells[ci]) continue;
+            if (curRow.cells[ci].text !== origRow.cells[ci].text) count++;
+          }
+        }
+      } else if (el.type === 'image' && el.replacementImageData) count++;
+    }
+    return count;
+  }, [slide.elements]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden max-w-full">
       {/* Header */}
-      <div className="px-4 py-3 border-b bg-muted/30">
+      <div className="shrink-0 border-b border-border/40 px-4 py-3 editor-header-gradient">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">第 {slide.slideNumber} 页编辑器</span>
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 shadow-sm shadow-emerald-500/20">
+              <FileText className="size-3.5 text-white" />
+            </div>
+            <div>
+              <span className="text-sm font-semibold tracking-tight">Slide {slide.slideNumber}</span>
+              <Badge variant="secondary" className="h-5 px-2 text-[10px] font-medium ml-1.5 shadow-sm">
+                {totalAll} element{totalAll !== 1 ? 's' : ''}
+              </Badge>
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span className="flex items-center gap-0.5">
-              <Type className="w-3 h-3" /> {textElements.length}
-            </span>
-            <span className="flex items-center gap-0.5">
-              <Table2 className="w-3 h-3" /> {tableElements.length}
-            </span>
-            <span className="flex items-center gap-0.5">
-              <ImageIcon className="w-3 h-3" /> {imageElements.length}
-            </span>
-          </div>
+          {modCount > 0 && (
+            <Badge
+              className={cn(
+                'rounded-full px-2 py-0 h-5 text-[11px] font-semibold',
+                'bg-amber-100 text-amber-700 border-amber-200/60',
+                'dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700/40'
+              )}
+            >
+              {modCount} edit{modCount !== 1 ? 's' : ''}
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-3 mt-2 ml-[38px]">
+          {totalText > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="size-2 rounded-full bg-emerald-500" />
+              <span className="text-[11px] text-muted-foreground">{totalText} text</span>
+            </div>
+          )}
+          {totalTable > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="size-2 rounded-full bg-amber-500" />
+              <span className="text-[11px] text-muted-foreground">{totalTable} table{totalTable !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+          {totalImage > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="size-2 rounded-full bg-cyan-500" />
+              <span className="text-[11px] text-muted-foreground">{totalImage} image{totalImage !== 1 ? 's' : ''}</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Scrollable element list */}
-      <ScrollArea className="flex-1" ref={scrollRef}>
-        <div className="p-4 space-y-3">
-          {visibleElements.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground text-sm">
-              本页没有可编辑的元素
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-2">
+        {visibleElements.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <div className={cn(
+              'flex size-14 items-center justify-center rounded-xl mb-4',
+              'bg-gradient-to-br from-muted/60 to-muted/30 ring-1 ring-border/20'
+            )}>
+              <FileText className="size-6 opacity-30" />
             </div>
-          )}
-
-          {/* Selected element section (pinned to top) */}
-          {selectedElement && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                <div className="w-3 h-0.5 bg-primary rounded-full" />
-                当前选中
+            <span className="text-sm font-medium">No editable elements</span>
+            <span className="text-xs mt-1.5 opacity-50 max-w-[200px] text-center leading-relaxed">
+              {hideEmpty ? 'Hidden empty elements — toggle to show all' : 'This slide has no content elements'}
+            </span>
+          </div>
+        ) : (
+          <>
+            {/* Selected element section */}
+            {selectedElements.length > 0 && (
+              <div className="space-y-2">
+                <SectionHeader
+                  icon={<MousePointerClick className="size-3" />}
+                  title="Selected"
+                  count={selectedElements.length}
+                  accentClass="bg-primary/10 text-primary"
+                />
+                {selectedElements.map((el) => {
+                  if (el.type === 'text') {
+                    return (
+                      <TextElementEditor
+                        key={el.id}
+                        element={el}
+                        isExpanded={expandedIds.has(el.id)}
+                        onToggle={() => toggleExpand(el.id)}
+                      />
+                    );
+                  }
+                  if (el.type === 'table') {
+                    return (
+                      <TableElementEditor
+                        key={el.id}
+                        element={el}
+                        isExpanded={expandedIds.has(el.id)}
+                        onToggle={() => toggleExpand(el.id)}
+                      />
+                    );
+                  }
+                  if (el.type === 'image') {
+                    return (
+                      <ImageElementDisplay
+                        key={el.id}
+                        element={el}
+                        isExpanded={expandedIds.has(el.id)}
+                        onToggle={() => toggleExpand(el.id)}
+                      />
+                    );
+                  }
+                  return null;
+                })}
               </div>
-              {selectedElement.type === 'text' && <TextElementEditor element={selectedElement} />}
-              {selectedElement.type === 'table' && <TableElementEditor element={selectedElement} />}
-              {selectedElement.type === 'image' && <ImageElementDisplay element={selectedElement} />}
-              <Separator className="my-3" />
-            </div>
-          )}
+            )}
 
-          {/* Text elements */}
-          {textElements.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                <Type className="w-3 h-3" /> 文本元素 ({textElements.length})
-              </div>
-              {textElements
-                .filter((el) => el.id !== selectedElementId)
-                .map((el) => (
-                  <TextElementEditor key={el.id} element={el} />
+            {/* Text elements section */}
+            {textElements.length > 0 && (
+              <div className="space-y-2">
+                <SectionHeader
+                  icon={<Type className="size-3" />}
+                  title="Text"
+                  count={totalText}
+                  accentClass="bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400"
+                />
+                {textElements.map((el) => (
+                  <TextElementEditor
+                    key={el.id}
+                    element={el}
+                    isExpanded={expandedIds.has(el.id)}
+                    onToggle={() => toggleExpand(el.id)}
+                  />
                 ))}
-            </div>
-          )}
-
-          {/* Table elements */}
-          {tableElements.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                <Table2 className="w-3 h-3" /> 表格元素 ({tableElements.length})
               </div>
-              {tableElements
-                .filter((el) => el.id !== selectedElementId)
-                .map((el) => (
-                  <TableElementEditor key={el.id} element={el} />
-                ))}
-            </div>
-          )}
+            )}
 
-          {/* Image elements */}
-          {imageElements.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                <ImageIcon className="w-3 h-3" /> 图片元素 ({imageElements.length})
-              </div>
-              {imageElements
-                .filter((el) => el.id !== selectedElementId)
-                .map((el) => (
-                  <ImageElementDisplay key={el.id} element={el} />
+            {/* Table elements section */}
+            {tableElements.length > 0 && (
+              <div className="space-y-2">
+                <SectionHeader
+                  icon={<Table2 className="size-3" />}
+                  title="Tables"
+                  count={totalTable}
+                  accentClass="bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400"
+                />
+                {tableElements.map((el) => (
+                  <TableElementEditor
+                    key={el.id}
+                    element={el}
+                    isExpanded={expandedIds.has(el.id)}
+                    onToggle={() => toggleExpand(el.id)}
+                  />
                 ))}
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+              </div>
+            )}
+
+            {/* Image elements section */}
+            {imageElements.length > 0 && (
+              <div className="space-y-2">
+                <SectionHeader
+                  icon={<ImageIcon className="size-3" />}
+                  title="Images"
+                  count={totalImage}
+                  accentClass="bg-cyan-100 text-cyan-600 dark:bg-cyan-900/40 dark:text-cyan-400"
+                />
+                {imageElements.map((el) => (
+                  <ImageElementDisplay
+                    key={el.id}
+                    element={el}
+                    isExpanded={expandedIds.has(el.id)}
+                    onToggle={() => toggleExpand(el.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
+// Export the scroll-to utility for external use
+export { scrollToElement, registerElementRef };
