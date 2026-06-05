@@ -102,19 +102,18 @@ export default function Home() {
     );
   }
 
-  // Upload state - landing page hero
+  // Upload state - landing page
   if (step === 'upload') {
     return (
       <div className="h-screen flex flex-col overflow-hidden max-w-full">
-        <main className="flex-1 flex items-center justify-center min-h-0 overflow-hidden w-full">
+        <main className="flex-1 min-h-0 overflow-hidden w-full">
           <UploadZone onAiGenerate={() => setAiDialogOpen(true)} onAiSettings={() => setAiSettingsOpen(true)} />
         </main>
-        <footer className="border-t bg-gradient-to-r from-muted/20 via-background to-muted/20 py-3 px-4 text-center text-xs text-muted-foreground flex-shrink-0">
+        <footer className="border-t border-border/30 py-2.5 px-4 text-center text-[11px] text-muted-foreground/50 flex-shrink-0 bg-hero-gradient">
           <div className="flex items-center justify-center gap-1.5">
-            <div className="w-4 h-4 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-              <Presentation className="w-2.5 h-2.5 text-white" />
-            </div>
-            PPTX 模板编辑器 · 上传 → 编辑 → 导出 · 保持原有排版格式
+            <Presentation className="w-3.5 h-3.5" />
+            <span>PPTX 模板编辑器</span>
+            <span className="hidden sm:inline">· 上传 → 编辑 → 导出</span>
           </div>
         </footer>
         <AiGenerateDialog open={aiDialogOpen} onOpenChange={setAiDialogOpen} onOpenSettings={() => { setAiDialogOpen(false); setAiSettingsOpen(true); }} />
@@ -152,19 +151,19 @@ export default function Home() {
       </div>
 
       {/* Status bar */}
-      <div className="border-t border-border/40 bg-muted/15 px-4 py-1.5 text-[11px] text-muted-foreground/50 flex-shrink-0 flex items-center justify-between max-w-full overflow-hidden">
-        <div className="flex items-center gap-3">
-          <span>← → 切换幻灯片</span>
-          <span className="text-border/40">·</span>
-          <span>Esc 取消选中</span>
+      <div className="border-t border-border/40 bg-muted/15 px-2 sm:px-4 py-1.5 text-[11px] text-muted-foreground/50 flex-shrink-0 flex items-center justify-between max-w-full overflow-hidden">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 truncate">
+          <span className="whitespace-nowrap">← → 切换</span>
+          <span className="text-border/40 hidden sm:inline">·</span>
+          <span className="hidden sm:inline whitespace-nowrap">Esc 取消选中</span>
         </div>
         {slides.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span>{slides.length} 页幻灯片</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <span className="whitespace-nowrap">{slides.length} 页</span>
             {getTotalModificationCount() > 0 && (
               <>
                 <span className="text-border/40">·</span>
-                <span className="text-amber-600/70 dark:text-amber-400/70">{getTotalModificationCount()} 处修改</span>
+                <span className="text-amber-600/70 dark:text-amber-400/70 whitespace-nowrap">{getTotalModificationCount()} 处修改</span>
               </>
             )}
           </div>
