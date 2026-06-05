@@ -12,9 +12,6 @@ import {
   RotateCcw,
   X,
   FileText,
-  Pencil,
-  Download,
-  CloudUpload,
   Loader2,
   ChevronRight,
   Clock,
@@ -71,16 +68,6 @@ const itemVariants = {
   },
 };
 
-const featureCardVariants = {
-  hidden: { opacity: 0, y: 30, scale: 0.95 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    scale: 1,
-    transition: { duration: 0.5, delay: 0.2 + i * 0.1, ease: [0.25, 0.46, 0.45, 0.94] },
-  }),
-};
-
 const floatingOrbVariants = {
   animate: {
     y: [0, -15, 5, 0],
@@ -98,37 +85,6 @@ const historyCardVariants = {
     transition: { duration: 0.4, delay: i * 0.06, ease: [0.25, 0.46, 0.45, 0.94] },
   }),
 };
-
-// ============================================================================
-// Feature definitions
-// ============================================================================
-
-const features = [
-  {
-    icon: CloudUpload,
-    title: '上传',
-    description: '拖拽或选择 PPTX 文件',
-    gradient: 'from-emerald-500 to-teal-500',
-    iconBg: 'bg-emerald-500/10',
-    iconColor: 'text-emerald-600 dark:text-emerald-400',
-  },
-  {
-    icon: Pencil,
-    title: '编辑',
-    description: '可视化修改文本与表格',
-    gradient: 'from-teal-500 to-cyan-500',
-    iconBg: 'bg-teal-500/10',
-    iconColor: 'text-teal-600 dark:text-teal-400',
-  },
-  {
-    icon: Download,
-    title: '导出',
-    description: '一键导出修改后的文件',
-    gradient: 'from-cyan-500 to-amber-500',
-    iconBg: 'bg-amber-500/10',
-    iconColor: 'text-amber-600 dark:text-amber-400',
-  },
-];
 
 // ============================================================================
 // HistoryThumbnail — loads thumbnail from API endpoint with error handling
@@ -429,102 +385,33 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
 
   return (
     <div className="h-full w-full max-w-full flex flex-col bg-hero-gradient relative overflow-hidden">
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
-
-      {/* Floating decorative orbs */}
-      <motion.div
-        variants={floatingOrbVariants}
-        animate="animate"
-        className="absolute top-0 left-0 w-48 h-48 rounded-full bg-emerald-400/20 dark:bg-emerald-500/10 blur-3xl pointer-events-none"
-      />
-      <motion.div
-        variants={floatingOrbVariants}
-        animate="animate"
-        style={{ animationDelay: '-3s' }}
-        className="absolute top-1/4 right-0 w-56 h-56 rounded-full bg-teal-400/15 dark:bg-teal-500/10 blur-3xl pointer-events-none"
-      />
-      <motion.div
-        variants={floatingOrbVariants}
-        animate="animate"
-        style={{ animationDelay: '-5s' }}
-        className="absolute bottom-0 left-1/3 w-64 h-64 rounded-full bg-amber-400/15 dark:bg-amber-500/8 blur-3xl pointer-events-none"
-      />
-      <motion.div
-        variants={floatingOrbVariants}
-        animate="animate"
-        style={{ animationDelay: '-7s' }}
-        className="absolute top-1/2 left-1/4 w-36 h-36 rounded-full bg-cyan-400/10 dark:bg-cyan-500/8 blur-3xl pointer-events-none"
-      />
-
       {/* Main content */}
       <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="visible"
-        className="relative z-10 flex-1 flex flex-col items-center px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10 overflow-y-auto overflow-x-hidden custom-scrollbar"
+        className="relative z-10 flex-1 flex flex-col items-center px-4 sm:px-6 py-4 sm:py-5 overflow-y-auto overflow-x-hidden custom-scrollbar"
       >
-        <div className="w-full max-w-5xl max-w-[calc(100vw-2rem)] flex flex-col items-center">
+        <div className="w-full max-w-2xl flex flex-col items-center">
           {/* ---- Hero Title ---- */}
-          <motion.div variants={itemVariants} className="text-center mb-8 sm:mb-10">
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
-              className="mb-5"
-            >
-              <Badge
-                variant="outline"
-                className="px-3.5 py-1 text-xs font-medium border-emerald-300/50 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/30 shadow-sm shadow-emerald-500/5"
-              >
-                <Sparkles className="size-3 mr-1.5" />
-                在线模板编辑工具
-              </Badge>
-            </motion.div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight gradient-text leading-tight">
+          <motion.div variants={itemVariants} className="text-center mb-4">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight gradient-text leading-tight">
               PPTX 模板编辑器
             </h1>
-            <p className="mt-4 sm:mt-5 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed">
-              上传 PowerPoint 文件，可视化编辑文本与表格内容，
-              <br className="hidden sm:block" />
-              一键导出修改后的文档
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              上传 PowerPoint 文件，可视化编辑文本与表格，一键导出
             </p>
           </motion.div>
 
-          {/* ---- Feature Cards ---- */}
-          <motion.div variants={itemVariants} className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-8 sm:mb-10 w-full max-w-2xl">
-            {features.map((feature, i) => (
-              <motion.div
-                key={feature.title}
-                custom={i}
-                variants={featureCardVariants}
-                whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.98 }}
-                className="flex-1"
-              >
-                <div className="feature-card-border glass rounded-xl p-4 sm:p-5 flex items-center gap-3 group hover:shadow-lg hover:shadow-emerald-500/8 transition-all duration-300 cursor-default">
-                  <div className={cn('shrink-0 size-10 rounded-lg flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:shadow-sm', feature.iconBg)}>
-                    <feature.icon className={cn('size-5', feature.iconColor)} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm">{feature.title}</div>
-                    <div className="text-xs text-muted-foreground truncate">{feature.description}</div>
-                  </div>
-                  <ChevronRight className="size-4 text-muted-foreground/30 group-hover:text-emerald-500/70 group-hover:translate-x-0.5 transition-all duration-300 ml-auto shrink-0" />
-                </div>
-              </motion.div>
-            ))}
-          </motion.div>
-
           {/* ---- Main Content Grid ---- */}
-          <div className="w-full grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
+          <div className="w-full grid grid-cols-1 lg:grid-cols-5 gap-3">
             {/* ---- Upload Zone (left, wider) ---- */}
             <motion.div variants={itemVariants} className="lg:col-span-3">
-              <div className="glass-strong rounded-2xl p-5 sm:p-6 h-full">
+              <div className="glass-strong rounded-xl p-3 h-full">
                 {/* Upload area */}
                 <div
                   className={cn(
-                    'relative rounded-xl border-2 border-dashed transition-all duration-300 cursor-pointer upload-zone-glow',
+                    'relative rounded-lg border-2 border-dashed transition-all duration-300 cursor-pointer upload-zone-glow',
                     isDragging
                       ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30 scale-[1.01] is-dragging'
                       : 'border-muted-foreground/20 hover:border-emerald-400/60 hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20',
@@ -553,7 +440,7 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                     aria-hidden="true"
                   />
 
-                  <div className="flex flex-col items-center justify-center py-12 sm:py-16 px-4">
+                  <div className="flex flex-col items-center justify-center py-5 sm:py-6 px-4">
                     <AnimatePresence mode="wait">
                       {isUploading ? (
                         <motion.div
@@ -561,21 +448,21 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                           initial={{ opacity: 0, scale: 0.8 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.8 }}
-                          className="flex flex-col items-center gap-4 w-full max-w-xs"
+                          className="flex flex-col items-center gap-3 w-full max-w-xs"
                         >
                           <div className="relative">
-                            <Loader2 className="size-12 text-emerald-600 dark:text-emerald-400 animate-spin" />
+                            <Loader2 className="size-8 text-emerald-600 dark:text-emerald-400 animate-spin" />
                             <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
                                 {uploadProgress}%
                               </span>
                             </div>
                           </div>
-                          <div className="w-full space-y-2">
-                            <p className="text-sm font-medium text-center text-foreground">
+                          <div className="w-full space-y-1.5">
+                            <p className="text-xs font-medium text-center text-foreground">
                               正在上传并解析...
                             </p>
-                            <div className="h-2 w-full rounded-full bg-emerald-100 dark:bg-emerald-900/40 overflow-hidden">
+                            <div className="h-1.5 w-full rounded-full bg-emerald-100 dark:bg-emerald-900/40 overflow-hidden">
                               <motion.div
                                 className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500"
                                 initial={{ width: 0 }}
@@ -591,32 +478,29 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                           initial={{ opacity: 0, scale: 0.8 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.8 }}
-                          className="flex flex-col items-center gap-4"
+                          className="flex flex-row items-center gap-3"
                         >
                           <motion.div
                             animate={isDragging ? { scale: 1.15, rotate: 5 } : { scale: 1, rotate: 0 }}
                             transition={{ type: 'spring', stiffness: 300, damping: 20 }}
                             className={cn(
-                              'size-16 rounded-2xl flex items-center justify-center transition-all duration-400 upload-icon-glow',
+                              'size-10 rounded-lg flex items-center justify-center transition-all duration-400 upload-icon-glow shrink-0',
                               isDragging
                                 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
                                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15',
                               !isDragging && 'animate-breathe'
                             )}
                           >
-                            <FileUp className="size-8" />
+                            <FileUp className="size-5" />
                           </motion.div>
-                          <div className="text-center space-y-1.5">
-                            <p className="text-base font-semibold text-foreground">
-                              {isDragging ? '松开以上传文件' : '拖拽文件到此处'}
+                          <div className="text-left space-y-0.5 min-w-0">
+                            <p className="text-sm font-semibold text-foreground">
+                              {isDragging ? '松开以上传文件' : '点击或拖拽 PPTX 文件到此处'}
                             </p>
-                            <p className="text-sm text-muted-foreground">
-                              或 <span className="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">点击选择文件</span>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <FileText className="size-3" />
+                              支持 .pptx 格式，最大 100MB
                             </p>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground/60 mt-1">
-                            <FileText className="size-3.5" />
-                            <span>支持 .pptx 格式，最大 100MB</span>
                           </div>
                         </motion.div>
                       )}
@@ -627,57 +511,49 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
             </motion.div>
 
             {/* ---- Right Sidebar ---- */}
-            <motion.div variants={itemVariants} className="lg:col-span-2 flex flex-col gap-4 sm:gap-5">
+            <motion.div variants={itemVariants} className="lg:col-span-2 flex flex-col gap-3">
               {/* ---- AI Generate Card ---- */}
-              <div className="relative group">
-                {/* Gradient border effect */}
-                <div className="absolute -inset-px rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-amber-500 opacity-40 group-hover:opacity-75 transition-opacity duration-500 blur-[1px]" />
-                <div className="relative glass-strong rounded-2xl p-5 animate-shimmer-sweep overflow-hidden">
-                  <div className="flex items-start gap-3 mb-3">
-                    <div className="size-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/25 group-hover:shadow-emerald-500/40 transition-shadow duration-500">
-                      <Sparkles className="size-5 text-white" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-sm">AI 智能生成</h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        使用 AI 自动填充模板内容
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 shrink-0 rounded-lg text-muted-foreground/50 hover:text-violet-600 hover:bg-violet-50 dark:hover:text-violet-400 dark:hover:bg-violet-900/20 transition-all duration-200"
-                      onClick={onAiSettings}
-                      title="AI 模型设置"
-                    >
-                      <Settings2 className="size-3.5" />
-                    </Button>
+              <div className="glass-strong rounded-xl p-3">
+                <div className="flex items-center gap-2.5 mb-2">
+                  <div className="size-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shrink-0">
+                    <Sparkles className="size-4 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-sm leading-tight">AI 智能生成</h3>
+                    <p className="text-[11px] text-muted-foreground">自动填充模板内容</p>
                   </div>
                   <Button
-                    onClick={onAiGenerate}
-                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md shadow-emerald-500/20 hover:shadow-lg hover:shadow-emerald-500/35 transition-all duration-300"
-                    size="sm"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0 rounded-md text-muted-foreground/50 hover:text-violet-600 hover:bg-violet-50 dark:hover:text-violet-400 dark:hover:bg-violet-900/20"
+                    onClick={onAiSettings}
+                    title="AI 模型设置"
                   >
-                    <Sparkles className="size-4" />
-                    开始 AI 生成
+                    <Settings2 className="size-3.5" />
                   </Button>
                 </div>
+                <Button
+                  onClick={onAiGenerate}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white"
+                  size="sm"
+                >
+                  <Sparkles className="size-3.5" />
+                  开始 AI 生成
+                </Button>
               </div>
 
               {/* ---- JSON Import Card ---- */}
-              <div className="glass-strong rounded-2xl overflow-hidden">
+              <div className="glass-strong rounded-xl overflow-hidden">
                 <button
                   onClick={() => setIsJsonExpanded(!isJsonExpanded)}
-                  className="w-full p-5 flex items-center gap-3 text-left hover:bg-white/20 dark:hover:bg-white/5 transition-colors"
+                  className="w-full p-3 flex items-center gap-2.5 text-left hover:bg-white/20 dark:hover:bg-white/5 transition-colors"
                 >
-                  <div className="size-9 rounded-lg bg-teal-500/10 flex items-center justify-center shrink-0">
-                    <Code2 className="size-4.5 text-teal-600 dark:text-teal-400" />
+                  <div className="size-7 rounded-md bg-teal-500/10 flex items-center justify-center shrink-0">
+                    <Code2 className="size-3.5 text-teal-600 dark:text-teal-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-sm">JSON 导入</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      通过文件 ID 和 JSON 数据导入
-                    </p>
+                    <h3 className="font-semibold text-sm leading-tight">JSON 导入</h3>
+                    <p className="text-[11px] text-muted-foreground">通过文件 ID 和 JSON 数据导入</p>
                   </div>
                   <motion.div
                     animate={{ rotate: isJsonExpanded ? 90 : 0 }}
@@ -696,31 +572,31 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                       transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
                       className="overflow-hidden"
                     >
-                      <div className="px-5 pb-5 space-y-3">
+                      <div className="px-3 pb-3 space-y-2">
                         <Separator className="!mt-0" />
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-muted-foreground">文件 ID</label>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-muted-foreground">文件 ID</label>
                           <Input
                             placeholder="输入文件 ID"
                             value={jsonFileId}
                             onChange={(e) => setJsonFileId(e.target.value)}
-                            className="h-8 text-xs"
+                            className="h-7 text-xs"
                           />
                         </div>
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-muted-foreground">JSON 数据</label>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-muted-foreground">JSON 数据</label>
                           <Textarea
                             placeholder='{"slides": [...]}'
                             value={jsonText}
                             onChange={(e) => setJsonText(e.target.value)}
-                            className="min-h-24 text-xs font-mono resize-none"
+                            className="min-h-20 text-xs font-mono resize-none"
                           />
                         </div>
                         <Button
                           onClick={handleJsonImport}
                           variant="outline"
                           size="sm"
-                          className="w-full border-teal-300/50 dark:border-teal-700/50 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30"
+                          className="w-full border-teal-300/50 dark:border-teal-700/50 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30 h-7 text-xs"
                         >
                           <Code2 className="size-3.5" />
                           导入 JSON
@@ -735,15 +611,15 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
 
           {/* ---- File History Section (Full Width) ---- */}
           {fileHistory.length > 0 && (
-            <motion.div variants={itemVariants} className="w-full mt-8 sm:mt-10">
+            <motion.div variants={itemVariants} className="w-full mt-5">
               {/* Section header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2.5">
-                  <div className="size-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                    <History className="size-4 text-amber-600 dark:text-amber-400" />
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="size-6 rounded-md bg-amber-500/10 flex items-center justify-center">
+                    <History className="size-3.5 text-amber-600 dark:text-amber-400" />
                   </div>
                   <h3 className="font-semibold text-sm">文件历史</h3>
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5">
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
                     {fileHistory.length}
                   </Badge>
                 </div>
@@ -751,7 +627,7 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                   variant="ghost"
                   size="sm"
                   onClick={handleClearHistory}
-                  className="text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/5 h-7 px-2"
+                  className="text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/5 h-6 px-2"
                 >
                   <Trash2 className="size-3 mr-1" />
                   清空
@@ -759,7 +635,7 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
               </div>
 
               {/* History card grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
                 {fileHistory.map((entry, index) => (
                   <motion.div
                     key={entry.fileId}
@@ -767,14 +643,14 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                     variants={historyCardVariants}
                     initial="hidden"
                     animate="visible"
-                    whileHover={{ y: -3, scale: 1.02 }}
+                    whileHover={{ y: -2, scale: 1.02 }}
                     className="group relative"
                   >
-                    <div className="glass-strong rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/10 hover:border-emerald-400/30 border border-transparent"
+                    <div className="glass-strong rounded-lg overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/10 hover:border-emerald-400/30 border border-transparent"
                       onClick={() => handleReopenFile(entry)}
                     >
                       {/* Thumbnail area — uses /api/pptx/thumbnail endpoint */}
-                      <div className="relative aspect-[16/10] bg-muted/30 overflow-hidden">
+                      <div className="relative aspect-[16/9] bg-muted/30 overflow-hidden">
                         <HistoryThumbnail fileId={entry.fileId} fileName={entry.fileName} />
 
                         {/* Hover overlay with open button */}
@@ -784,18 +660,18 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                             whileHover={{ scale: 1.1 }}
                             className="opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                           >
-                            <div className="size-10 rounded-full bg-white/90 dark:bg-white/80 shadow-lg flex items-center justify-center">
+                            <div className="size-8 rounded-full bg-white/90 dark:bg-white/80 shadow-lg flex items-center justify-center">
                               {reopeningFileId === entry.fileId ? (
-                                <Loader2 className="size-4 text-emerald-600 animate-spin" />
+                                <Loader2 className="size-3.5 text-emerald-600 animate-spin" />
                               ) : (
-                                <Play className="size-4 text-emerald-600 ml-0.5" />
+                                <Play className="size-3.5 text-emerald-600 ml-0.5" />
                               )}
                             </div>
                           </motion.div>
                         </div>
 
                         {/* Slide count badge */}
-                        <div className="absolute top-2 right-2">
+                        <div className="absolute top-1.5 right-1.5">
                           <Badge className="text-[9px] px-1.5 py-0 h-4 bg-black/50 text-white border-0 backdrop-blur-sm">
                             <Layers className="size-2.5 mr-0.5" />
                             {entry.slideCount} 页
@@ -804,9 +680,9 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
                       </div>
 
                       {/* Info area */}
-                      <div className="p-2.5">
-                        <p className="text-xs font-medium truncate leading-tight">{entry.fileName}</p>
-                        <div className="flex items-center justify-between mt-1">
+                      <div className="p-2">
+                        <p className="text-[11px] font-medium truncate leading-tight">{entry.fileName}</p>
+                        <div className="flex items-center justify-between mt-0.5">
                           <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                             <Clock className="size-2.5" />
                             {formatTimeAgo(entry.openedAt)}
@@ -833,18 +709,6 @@ export function UploadZone({ onAiGenerate, onAiSettings }: UploadZoneProps) {
           )}
         </div>
       </motion.div>
-
-      {/* ---- Footer ---- */}
-      <motion.footer
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.8, duration: 0.5 }}
-        className="relative z-10 py-3 px-4 text-center flex-shrink-0"
-      >
-        <p className="text-xs text-muted-foreground/60">
-          PPTX 模板编辑器 · 上传即可开始编辑
-        </p>
-      </motion.footer>
 
     </div>
   );
