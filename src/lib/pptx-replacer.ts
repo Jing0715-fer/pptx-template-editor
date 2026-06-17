@@ -70,7 +70,6 @@ function escapeXmlText(text: string): string {
   // which is a common cause of "blank slide after text replacement" bugs.
   // U+0009 (tab), U+000A (LF), U+000D (CR) are allowed and preserved.
   // U+FFFE / U+FFFF (non-characters) are also stripped for safety.
-  // eslint-disable-next-line no-control-regex
   let result = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
 
   // Step 2: Escape the three XML-reserved characters.

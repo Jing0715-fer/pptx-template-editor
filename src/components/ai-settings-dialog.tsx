@@ -88,7 +88,7 @@ const PROVIDER_INFO: Record<LlmProvider, {
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o',
     placeholder: 'https://api.openai.com/v1',
-    description: '兼容 OpenAI Chat Completions API 格式（支持各类第三方中转）',
+    description: 'Compatible with OpenAI Chat Completions API format (supports third-party proxies)',
   },
   anthropic: {
     label: 'Anthropic',
@@ -99,7 +99,7 @@ const PROVIDER_INFO: Record<LlmProvider, {
     defaultBaseUrl: 'https://api.anthropic.com',
     defaultModel: 'claude-sonnet-4-20250514',
     placeholder: 'https://api.anthropic.com',
-    description: '兼容 Anthropic Messages API 格式（支持各类第三方中转）',
+    description: 'Compatible with Anthropic Messages API format (supports third-party proxies)',
   },
 };
 
@@ -150,7 +150,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
         },
       });
     } catch {
-      toast.error('加载配置失败');
+      toast.error('Failed to load configuration');
     } finally {
       setIsLoading(false);
     }
@@ -164,15 +164,15 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
   const handleSave = useCallback(async () => {
     const form = forms[activeProvider];
     if (!form.baseUrl.trim()) {
-      toast.error('请输入 API Base URL');
+      toast.error('Please enter the API Base URL');
       return;
     }
     if (!form.apiKey.trim()) {
-      toast.error('请输入 API Key');
+      toast.error('Please enter the API Key');
       return;
     }
     if (!form.model.trim()) {
-      toast.error('请输入模型名称');
+      toast.error('Please enter the model name');
       return;
     }
 
@@ -208,10 +208,10 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
         [activeProvider]: { ...prev[activeProvider], apiKey: '' },
       }));
       setShowApiKeys((prev) => ({ ...prev, [activeProvider]: false }));
-      toast.success(`${PROVIDER_INFO[activeProvider].label} 配置已保存`);
+      toast.success(`${PROVIDER_INFO[activeProvider].label} configuration saved`);
       onConfigChange?.();
     } catch {
-      toast.error('保存配置失败');
+      toast.error('Failed to save configuration');
     } finally {
       setIsSaving(false);
     }
@@ -241,10 +241,10 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
           model: PROVIDER_INFO[activeProvider].defaultModel,
         },
       }));
-      toast.success(`${PROVIDER_INFO[activeProvider].label} 配置已清除`);
+      toast.success(`${PROVIDER_INFO[activeProvider].label} configuration cleared`);
       onConfigChange?.();
     } catch {
-      toast.error('清除配置失败');
+      toast.error('Failed to clear configuration');
     } finally {
       setIsDeleting(false);
     }
@@ -254,7 +254,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
   const handleSetDefault = useCallback(async () => {
     const providerConfig = configState?.[activeProvider];
     if (!providerConfig?.configured) {
-      toast.error('请先配置该提供商的 API Key');
+      toast.error('Please configure the API Key for this provider first');
       return;
     }
     try {
@@ -280,7 +280,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
     // For now, just update locally
     if (configState) {
       setConfigState({ ...configState, defaultProvider: activeProvider });
-      toast.success(`已将 ${PROVIDER_INFO[activeProvider].label} 设为默认提供商`);
+      toast.success(`Set ${PROVIDER_INFO[activeProvider].label} as default provider`);
     }
   }, [activeProvider, configState]);
 
@@ -330,10 +330,10 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
               </div>
               <div>
                 <DialogTitle className="text-lg font-bold tracking-tight">
-                  AI 模型设置
+                  AI Settings
                 </DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground mt-0.5">
-                  配置 LLM API 连接参数
+                  Configure LLM API connection parameters
                 </DialogDescription>
               </div>
             </div>
@@ -348,9 +348,9 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
               )}
             >
               {configState?.configured ? (
-                <><CheckCircle2 className="size-3 mr-1" />已配置</>
+                <><CheckCircle2 className="size-3 mr-1" />Configured</>
               ) : (
-                <><AlertCircle className="size-3 mr-1" />未配置</>
+                <><AlertCircle className="size-3 mr-1" />Not Configured</>
               )}
             </Badge>
           </div>
@@ -415,11 +415,11 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                   <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/80 dark:bg-zinc-900/50 p-3.5">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                        当前配置
+                        Current Configuration
                       </p>
                       {isDefaultProvider && (
                         <Badge className="text-[10px] font-medium bg-violet-100/80 text-violet-700 border-violet-200/50 dark:bg-violet-900/30 dark:text-violet-300 dark:border-violet-800/40">
-                          默认
+                          Default
                         </Badge>
                       )}
                     </div>
@@ -469,8 +469,8 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                   />
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
                     {activeProvider === 'openai'
-                      ? '兼容 OpenAI Chat Completions API 格式，自动补全 /v1 后缀'
-                      : '兼容 Anthropic Messages API 格式，请输入 API 根地址'}
+                      ? 'Compatible with OpenAI Chat Completions API format, auto-completes /v1 suffix'
+                      : 'Compatible with Anthropic Messages API format, enter the API root URL'}
                   </p>
                 </div>
 
@@ -478,7 +478,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                 <div className="space-y-2">
                   <label className="flex items-center gap-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
                     <Bot className="size-3.5" />
-                    模型名称
+                    Model Name
                     <span className="text-rose-500">*</span>
                   </label>
                   <Input
@@ -494,8 +494,8 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                   />
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
                     {activeProvider === 'openai'
-                      ? '例如：gpt-4o, gpt-4o-mini, deepseek-chat 等'
-                      : '例如：claude-sonnet-4-20250514, claude-3-5-haiku-20241022 等'}
+                      ? 'e.g., gpt-4o, gpt-4o-mini, deepseek-chat, etc.'
+                      : 'e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022, etc.'}
                   </p>
                 </div>
 
@@ -507,14 +507,14 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                     <span className="text-rose-500">*</span>
                     {isConfigured && (
                       <span className="text-[10px] font-normal text-amber-500 ml-1">
-                        重新输入以覆盖
+                        Re-enter to overwrite
                       </span>
                     )}
                   </label>
                   <div className="relative">
                     <Input
                       type={showApiKeys[activeProvider] ? 'text' : 'password'}
-                      placeholder={isConfigured ? '输入新的 API Key 以覆盖' : '输入你的 API Key'}
+                      placeholder={isConfigured ? 'Enter new API Key to overwrite' : 'Enter your API Key'}
                       value={activeForm.apiKey}
                       onChange={(e) =>
                         setForms((prev) => ({
@@ -538,7 +538,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                     </button>
                   </div>
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    API Key 仅保存在服务器本地，不会上传到任何第三方服务
+                    API Key is saved locally on the server and will not be uploaded to any third-party service
                   </p>
                 </div>
 
@@ -555,9 +555,9 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                     )}
                   >
                     {isSaving ? (
-                      <><Loader2 className="size-3.5 animate-spin mr-1.5" />保存中...</>
+                      <><Loader2 className="size-3.5 animate-spin mr-1.5" />Saving...</>
                     ) : (
-                      '保存配置'
+                      'Save Configuration'
                     )}
                   </Button>
 
@@ -568,7 +568,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                       onClick={handleSetDefault}
                       className="h-9 rounded-lg text-xs border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20"
                     >
-                      设为默认
+                      Set as Default
                     </Button>
                   )}
 
@@ -579,7 +579,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
                       onClick={handleDelete}
                       disabled={isDeleting}
                       className="size-9 shrink-0 rounded-lg border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-rose-500 hover:border-rose-300 dark:hover:border-rose-700 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
-                      title="清除配置"
+                      title="Clear Configuration"
                     >
                       {isDeleting ? (
                         <Loader2 className="size-3.5 animate-spin" />
@@ -598,7 +598,7 @@ export function AiSettingsDialog({ children, open, onOpenChange, onConfigChange 
         <Separator />
         <div className="px-6 py-3">
           <p className="text-[11px] text-center text-zinc-400 dark:text-zinc-500">
-            配置保存至服务器 .z-ai-config 文件 · 仅本机使用 · 支持 OpenAI / Anthropic 兼容接口
+            Configuration saved to server .z-ai-config file · Local use only · Supports OpenAI / Anthropic compatible interfaces
           </p>
         </div>
       </DialogContent>

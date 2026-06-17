@@ -166,13 +166,13 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
   const validateFile = (file: File): string | null => {
     const name = file.name.toLowerCase();
     if (!name.endsWith('.docx') && !name.endsWith('.xlsx') && !name.endsWith('.xls')) {
-      return '仅支持 .docx, .xlsx, .xls 格式文件';
+      return 'Only .docx, .xlsx, .xls format files are supported';
     }
     if (file.size > 50 * 1024 * 1024) {
-      return '文件大小不能超过 50MB';
+      return 'File size cannot exceed 50MB';
     }
     if (file.size === 0) {
-      return '文件内容为空';
+      return 'File is empty';
     }
     return null;
   };
@@ -254,7 +254,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'AI 生成失败');
+        throw new Error(data.error || 'AI generation failed');
       }
 
       setResult({
@@ -359,10 +359,10 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
               </motion.div>
               <div>
                 <DialogTitle className="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-                  AI 内容生成
+                  AI Content Generation
                 </DialogTitle>
                 <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  上传数据源，让 AI 智能填充模板
+                  Upload a data source and let AI intelligently fill the template
                 </DialogDescription>
               </div>
             </div>
@@ -393,7 +393,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                       {fileName || 'Untitled Template'}
                     </p>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      {slideCount} 页幻灯片 &middot; {totalElements} 个元素
+                      {slideCount} slides &middot; {totalElements} elements
                     </p>
                   </div>
                   <Badge
@@ -410,14 +410,14 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
             <motion.div {...fadeSlideUp} transition={{ ...fadeSlideUp.transition, delay: 0.03 }}>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  AI 模型 <span className="text-rose-500">*</span>
+                  AI Model <span className="text-rose-500">*</span>
                 </label>
                 <button
                   onClick={onOpenSettings}
                   className="flex items-center gap-1 text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors"
                 >
                   <Settings2 className="size-3" />
-                  设置
+                  Settings
                 </button>
               </div>
               <div className="flex gap-2">
@@ -453,12 +453,12 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                 <div className="mt-2 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 flex items-center gap-2">
                   <AlertCircle className="size-3.5 text-amber-500 shrink-0" />
                   <p className="text-xs text-amber-700 dark:text-amber-400">
-                    {PROVIDERS[selectedProvider].label} 未配置，请先
+                    {PROVIDERS[selectedProvider].label} not configured, please
                     <button
                       onClick={onOpenSettings}
                       className="underline font-medium hover:text-amber-800 dark:hover:text-amber-300 mx-0.5"
                     >
-                      设置 API Key
+                      set API Key
                     </button>
                   </p>
                 </div>
@@ -466,7 +466,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
               {/* Show current model when configured */}
               {isCurrentProviderConfigured && currentProviderConfig && (
                 <p className="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">
-                  当前模型: <span className="font-mono">{currentProviderConfig.model}</span>
+                  Current model: <span className="font-mono">{currentProviderConfig.model}</span>
                 </p>
               )}
             </motion.div>
@@ -474,7 +474,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
             {/* Data Source Upload */}
             <motion.div {...fadeSlideUp} transition={{ ...fadeSlideUp.transition, delay: 0.05 }}>
               <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                数据源 <span className="text-rose-500">*</span>
+                Data Source <span className="text-rose-500">*</span>
               </label>
 
               <AnimatePresence mode="wait">
@@ -559,10 +559,10 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                         </div>
                         <div>
                           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                            {isDragOver ? '将文件拖放到此处' : '拖放或点击上传'}
+                            {isDragOver ? 'Drop file here' : 'Drag & drop or click to upload'}
                           </p>
                           <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-                            支持 .docx, .xlsx, .xls &mdash; 最大 50MB
+                            Supports .docx, .xlsx, .xls &mdash; Max 50MB
                           </p>
                         </div>
                       </motion.div>
@@ -575,13 +575,13 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
             {/* Custom Prompt */}
             <motion.div {...fadeSlideUp} transition={{ ...fadeSlideUp.transition, delay: 0.1 }}>
               <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                自定义提示词 <span className="text-xs font-normal text-zinc-400">(可选)</span>
+                Custom Prompt <span className="text-xs font-normal text-zinc-400">(optional)</span>
               </label>
               <div className="relative">
                 <Textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="描述 AI 应如何理解和填充数据到模板..."
+                  placeholder="Describe how AI should understand and fill data into the template..."
                   rows={3}
                   className="resize-none rounded-xl border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus-visible:ring-violet-500/30 focus-visible:border-violet-400 dark:focus-visible:ring-violet-500/20 dark:focus-visible:border-violet-500 transition-all duration-200"
                 />
@@ -615,12 +615,12 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                     className="flex items-center gap-2"
                   >
                     <Loader2 className="size-4 animate-spin" />
-                    使用 {PROVIDERS[selectedProvider].label} 生成中...
+                    Generating with {PROVIDERS[selectedProvider].label}...
                   </motion.span>
                 ) : (
                   <span className="flex items-center gap-2">
                     <Sparkles className="size-4" />
-                    使用 {PROVIDERS[selectedProvider].label} 生成
+                    Generate with {PROVIDERS[selectedProvider].label}
                   </span>
                 )}
               </Button>
@@ -640,7 +640,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                       <AlertCircle className="size-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-rose-700 dark:text-rose-300">
-                          生成失败
+                          Generation Failed
                         </p>
                         <p className="text-xs text-rose-600/80 dark:text-rose-400/80 mt-0.5 break-words">
                           {error}
@@ -675,8 +675,8 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
                           {result.modifications.length > 0
-                            ? `找到 ${result.modifications.length} 项修改`
-                            : '未找到匹配的修改'}
+                            ? `Found ${result.modifications.length} modifications`
+                            : 'No matching modifications found'}
                         </p>
                         {result.summary && (
                           <p className="text-xs text-emerald-700/70 dark:text-emerald-400/70 mt-1 leading-relaxed">
@@ -695,7 +695,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                     <motion.div {...scaleIn} className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
                       <div className="bg-zinc-50 dark:bg-zinc-900/50 px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800">
                         <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                          修改详情
+                          Modification Details
                         </p>
                       </div>
                       <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
@@ -726,7 +726,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                                  幻灯片 {mod.slideIndex + 1}
+                                  Slide {mod.slideIndex + 1}
                                 </p>
                                 <p className="text-sm text-zinc-800 dark:text-zinc-200 mt-0.5 break-words">
                                   {getModLabel(mod)}
@@ -761,12 +761,12 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                         {isApplied ? (
                           <span className="flex items-center gap-2">
                             <CheckCircle2 className="size-4" />
-                            已应用
+                            Applied
                           </span>
                         ) : (
                           <span className="flex items-center gap-2">
                             <Wand2 className="size-4" />
-                            应用修改
+                            Apply Modifications
                           </span>
                         )}
                       </Button>
@@ -783,7 +783,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
                     >
                       <span className="flex items-center gap-2">
                         <Sparkles className="size-3.5" />
-                        {hasResult ? '重新生成' : '重试'}
+                        {hasResult ? 'Regenerate' : 'Retry'}
                       </span>
                     </Button>
                   </div>
@@ -797,7 +797,7 @@ export function AiGenerateDialog({ children, open, onOpenChange, onOpenSettings 
         <Separator className="bg-zinc-100 dark:bg-zinc-800" />
         <div className="px-6 py-3">
           <p className="text-[11px] text-center text-zinc-400 dark:text-zinc-500">
-            AI 生成内容可能不准确，请在应用前仔细检查所有修改
+            AI-generated content may be inaccurate. Please review all modifications carefully before applying.
           </p>
         </div>
       </DialogContent>

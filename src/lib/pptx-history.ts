@@ -51,9 +51,9 @@ export function formatTimeAgo(timestamp: number): string {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (days > 7) return new Date(timestamp).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-  if (days > 0) return `${days} 天前`;
-  if (hours > 0) return `${hours} 小时前`;
-  if (minutes > 0) return `${minutes} 分钟前`;
-  return '刚刚';
+  if (days > 7) return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (days > 0) return `${days} d ago`;
+  if (hours > 0) return `${hours} h ago`;
+  if (minutes > 0) return `${minutes} m ago`;
+  return 'just now';
 }

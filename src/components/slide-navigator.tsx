@@ -1,18 +1,30 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, EyeOff, FileText, ChevronLeft, ChevronRight, Presentation } from 'lucide-react';
+import { Eye, EyeOff, FileText, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import {
-  type PptxElement,
-  type PptxTextElement,
-  type PptxImageElement,
   type PptxSlideData,
   usePptxStore,
 } from '@/lib/pptx-store';
-import { isEmptyElement } from '@/components/slide-preview';
-import { scrollToElement } from '@/components/slide-editor';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -49,81 +61,175 @@ function getSlideModificationCount(slide: PptxSlideData): number {
   return count;
 }
 
-function isElementModified(el: PptxElement): boolean {
-  if (el.type === 'text') {
-    return (el as PptxTextElement).currentText !== undefined &&
-           (el as PptxTextElement).currentText !== (el as PptxTextElement).originalText;
+// Helper to get element type counts for a slide
+function getElementTypeCounts(slide: PptxSlideData) {
+  let text = 0;
+  let table = 0;
+  let image = 0;
+  for (const el of slide.elements) {
+    if (el.type === 'text') text++;
+    else if (el.type === 'table') table++;
+    else if (el.type === 'image') image++;
   }
-  if (el.type === 'image') {
-    return !!(el as PptxImageElement).replacementImageData;
-  }
-  return false;
+  return { text, table, image, total: text + table + image };
 }
 
-// Build data URL for image element
-function buildImageDataUrl(element: PptxImageElement): string | null {
-  const toMimeType = (t: string | undefined): string => {
-    if (!t) return 'image/png';
-    if (t.includes('/')) return t;
-    const extMap: Record<string, string> = {
-      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-      gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml',
-      tiff: 'image/tiff', tif: 'image/tiff', emf: 'image/x-emf', wmf: 'image/x-wmf',
-      webp: 'image/webp',
-    };
-    return extMap[t.toLowerCase()] || `image/${t.toLowerCase()}`;
+// ── Sortable Slide Card (Expanded) ──
+function SortableSlideCard({
+  slide,
+  index,
+  isActive,
+  modCount,
+  previewErrors,
+  onPreviewError,
+  onClick,
+}: {
+  slide: PptxSlideData;
+  index: number;
+  isActive: boolean;
+  modCount: number;
+  previewErrors: Set<number>;
+  onPreviewError: (slideNumber: number) => void;
+  onClick: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `slide-${slide.slideNumber}` });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
   };
 
-  const buildUrl = (data: string | null | undefined, type: string | undefined): string | null => {
-    if (!data) return null;
-    if (data.startsWith('data:')) return data;
-    const mime = toMimeType(type);
-    return `data:${mime};base64,${data}`;
-  };
+  const typeCounts = getElementTypeCounts(slide);
+  // Only show type bar if there are more than 1 element type
+  const showTypeBar = typeCounts.total > 0 && [typeCounts.text > 0, typeCounts.table > 0, typeCounts.image > 0].filter(Boolean).length > 1;
 
-  if (element.replacementImageData) {
-    return buildUrl(element.replacementImageData, element.replacementImageType);
-  }
-  if (element.imageData) {
-    return buildUrl(element.imageData, element.imageType);
-  }
-  return null;
+  return (
+    <motion.div
+      ref={setNodeRef}
+      style={style}
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: isDragging ? 0.9 : 1, y: 0, scale: isDragging ? 1.03 : 1 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.15 }}
+      onClick={onClick}
+      className={cn(
+        'group relative mb-1 cursor-pointer overflow-hidden rounded-md border transition-all duration-200',
+        isDragging && 'shadow-lg z-10 opacity-90',
+        isActive
+          ? 'border-emerald-400/40 bg-emerald-50/40 dark:border-emerald-500/30 dark:bg-emerald-950/20 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+          : 'border-transparent hover:border-border/40 hover:bg-accent/30'
+      )}
+    >
+      {/* Left emerald bar indicator for active slide */}
+      {isActive && (
+        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-emerald-500 z-10" />
+      )}
+
+      {/* Faint left border indicator on hover for non-active */}
+      {!isActive && (
+        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-emerald-500/0 group-hover:bg-emerald-500/30 transition-all duration-200 z-10" />
+      )}
+
+      {/* Bottom gradient bar for active */}
+      {isActive && (
+        <motion.div
+          layoutId="slide-accent-bar"
+          className="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500 to-teal-500"
+          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+        />
+      )}
+
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        {/* Drag handle */}
+        <div
+          className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-grab active:cursor-grabbing flex-shrink-0"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-2.5 text-muted-foreground/50 hover:text-muted-foreground/80" />
+        </div>
+
+        {/* Thumbnail */}
+        <div className={cn(
+          'relative w-14 h-8 overflow-hidden rounded bg-muted/40 flex-shrink-0 transition-all duration-200',
+          'hover:scale-[1.02]',
+          'hover:shadow-[0_0_8px_rgba(16,185,129,0.15)]'
+        )}>
+          {slide.previewImage && !previewErrors.has(slide.slideNumber) ? (
+            <img
+              src={slide.previewImage}
+              alt={`Slide ${slide.slideNumber}`}
+              className="h-full w-full object-cover"
+              draggable={false}
+              onError={() => onPreviewError(slide.slideNumber)}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-muted/20 dark:bg-muted/30">
+              <FileText className="size-3 text-muted-foreground/30" />
+            </div>
+          )}
+          <div
+            className={cn(
+              'absolute bottom-0 left-0.5 flex items-center justify-center rounded-sm px-0.5 text-[7px] font-semibold',
+              isActive
+                ? 'bg-emerald-500/90 text-white'
+                : 'bg-black/40 text-white'
+            )}
+          >
+            {slide.slideNumber}
+          </div>
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <span className={cn(
+            'text-[10px] font-medium block truncate',
+            isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'
+          )}>
+            Slide {slide.slideNumber}
+          </span>
+          <span className="text-[9px] text-muted-foreground block truncate">
+            {typeCounts.total} el
+          </span>
+          {/* Element type breakdown bar */}
+          {showTypeBar && (
+            <div className="mt-0.5 w-full h-1 rounded-full overflow-hidden flex bg-muted/30">
+              <div
+                className="bg-emerald-500 dark:bg-emerald-400 transition-all duration-300"
+                style={{ width: `${(typeCounts.text / typeCounts.total) * 100}%` }}
+              />
+              <div
+                className="bg-amber-500 dark:bg-amber-400 transition-all duration-300"
+                style={{ width: `${(typeCounts.table / typeCounts.total) * 100}%` }}
+              />
+              <div
+                className="bg-cyan-500 dark:bg-cyan-400 transition-all duration-300"
+                style={{ width: `${(typeCounts.image / typeCounts.total) * 100}%` }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Modification badge */}
+        {modCount > 0 && (
+          <Badge className="bg-amber-500 text-white border-0 text-[7px] px-0.5 py-0 h-3.5 shrink-0">
+            {modCount}
+          </Badge>
+        )}
+      </div>
+    </motion.div>
+  );
 }
 
-// Color scheme for element overlays
-const ELEMENT_COLORS = {
-  text: {
-    border: 'rgba(20, 184, 166, 0.55)',
-    bg: 'rgba(20, 184, 166, 0.07)',
-    hoverBg: 'rgba(20, 184, 166, 0.13)',
-    selectedBorder: 'rgb(20, 184, 166)',
-    glow: 'rgba(20, 184, 166, 0.40)',
-    dot: 'rgb(20, 184, 166)',
-  },
-  table: {
-    border: 'rgba(16, 185, 129, 0.55)',
-    bg: 'rgba(16, 185, 129, 0.07)',
-    hoverBg: 'rgba(16, 185, 129, 0.13)',
-    selectedBorder: 'rgb(16, 185, 129)',
-    glow: 'rgba(16, 185, 129, 0.40)',
-    dot: 'rgb(16, 185, 129)',
-  },
-  image: {
-    border: 'rgba(139, 92, 246, 0.55)',
-    bg: 'rgba(139, 92, 246, 0.07)',
-    hoverBg: 'rgba(139, 92, 246, 0.13)',
-    selectedBorder: 'rgb(139, 92, 246)',
-    glow: 'rgba(139, 92, 246, 0.40)',
-    dot: 'rgb(139, 92, 246)',
-  },
-} as const;
-
-type ElementTypeKey = 'text' | 'table' | 'image';
-function getElementColors(type: ElementTypeKey) {
-  return ELEMENT_COLORS[type];
-}
-
-export default function SlideNavigator({ slides, currentSlide }: SlideNavigatorProps) {
+export default function SlideNavigator({ slides, currentSlide: _currentSlide }: SlideNavigatorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [previewErrors, setPreviewErrors] = useState<Set<number>>(new Set());
   const {
@@ -132,81 +238,66 @@ export default function SlideNavigator({ slides, currentSlide }: SlideNavigatorP
     hideEmpty,
     toggleHideEmpty,
     getTotalModificationCount,
-    selectedElementId,
-    selectElement,
-    slideSize,
+    reorderSlides,
   } = usePptxStore();
 
   const totalModifications = getTotalModificationCount();
-  const { width: slideW, height: slideH } = slideSize;
 
-  const handleDoubleClick = useCallback(
-    (elementId: string) => {
-      selectElement(elementId);
-      requestAnimationFrame(() => {
-        scrollToElement(elementId);
-      });
-    },
-    [selectElement],
+  // Compute total element count for progress bar
+  const totalElements = slides.reduce((sum, slide) => sum + slide.elements.length, 0);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
   );
 
-  // Visible elements for current slide preview (filter empty + background-style)
-  const visibleElements = useMemo(() => {
-    if (!currentSlide) return [];
-    return (hideEmpty
-      ? currentSlide.elements.filter((el) => !isEmptyElement(el))
-      : currentSlide.elements
-    ).filter((el) => el.position.width > 0 && el.position.height > 0).filter((el) => {
-      const wPct = el.position.width / slideW;
-      const hPct = el.position.height / slideH;
-      const coversMost = wPct >= 0.9 && hPct >= 0.9;
-      const isLargeDecor = wPct >= 0.1 && hPct >= 0.1 && (wPct * hPct) >= 0.05;
-      if (el.type === 'image' && coversMost && !el.replacementImageData) return false;
-      if (el.type === 'text' && isEmptyElement(el)) {
-        if (coversMost) return false;
-        if (isLargeDecor) return false;
-      }
-      return true;
-    });
-  }, [currentSlide, hideEmpty, slideW, slideH]);
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-  // Decorative overlays: small empty text shapes (WPS template placeholders)
-  const decorOverlays = useMemo(() => {
-    if (!currentSlide || !hideEmpty) return [];
-    return currentSlide.elements.filter((el) => {
-      if (!isEmptyElement(el)) return false;
-      if (el.position.width <= 0 || el.position.height <= 0) return false;
-      const wPct = el.position.width / slideW;
-      const hPct = el.position.height / slideH;
-      const coversMost = wPct >= 0.9 && hPct >= 0.9;
-      if (coversMost) return false;
-      const isLargeDecor = wPct >= 0.1 && hPct >= 0.1 && (wPct * hPct) >= 0.05;
-      if (isLargeDecor) return false;
-      return wPct < 0.5 && hPct < 0.5;
-    });
-  }, [currentSlide, hideEmpty, slideW, slideH]);
+    // Extract indices from sortable IDs
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    const activeIndex = slides.findIndex((s) => `slide-${s.slideNumber}` === activeId);
+    const overIndex = slides.findIndex((s) => `slide-${s.slideNumber}` === overId);
+
+    if (activeIndex !== -1 && overIndex !== -1) {
+      reorderSlides(activeIndex, overIndex);
+    }
+  }, [slides, reorderSlides]);
+
+  const handlePreviewError = useCallback((slideNumber: number) => {
+    setPreviewErrors(prev => new Set(prev).add(slideNumber));
+  }, []);
 
   return (
     <motion.aside
-      className="flex h-full flex-col overflow-hidden bg-background border-r border-border/40"
-      animate={{ width: collapsed ? 52 : 280 }}
+      className="flex h-full flex-col overflow-hidden bg-background dark:bg-muted/10 border-r border-border/30"
+      animate={{ width: collapsed ? 44 : 200 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       {/* ── Header ── */}
-      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-3 bg-gradient-to-r from-emerald-500/5 via-teal-500/3 to-transparent flex-shrink-0">
+      <div className="flex items-center gap-1.5 border-b border-border/30 px-2 h-[30px] flex-shrink-0">
         <AnimatePresence mode="wait">
           {!collapsed && (
             <motion.div
               key="header-content"
-              initial={{ opacity: 0, x: -8 }}
+              initial={{ opacity: 0, x: -6 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -8 }}
-              transition={{ duration: 0.15 }}
-              className="flex flex-1 items-center gap-2 overflow-hidden"
+              exit={{ opacity: 0, x: -6 }}
+              transition={{ duration: 0.12 }}
+              className="flex flex-1 items-center gap-1.5 overflow-hidden"
             >
-              <FileText className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate text-sm font-semibold">幻灯片</span>
-              <Badge variant="secondary" className="ml-auto shrink-0 text-[10px] px-1.5 py-0">
+              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate text-[11px] font-semibold">Slides</span>
+              <Badge variant="secondary" className="ml-auto shrink-0 text-[9px] px-1 py-0 h-3.5">
                 {slides.length}
               </Badge>
             </motion.div>
@@ -220,18 +311,19 @@ export default function SlideNavigator({ slides, currentSlide }: SlideNavigatorP
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7"
+                className="size-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
                 onClick={toggleHideEmpty}
+                aria-label={hideEmpty ? 'Show empty elements' : 'Hide empty elements'}
               >
                 {hideEmpty ? (
-                  <EyeOff className="size-3.5 text-muted-foreground" />
+                  <EyeOff className="size-3 text-muted-foreground" />
                 ) : (
-                  <Eye className="size-3.5 text-muted-foreground" />
+                  <Eye className="size-3 text-muted-foreground" />
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
-              {hideEmpty ? '显示空元素' : '隐藏空元素'}
+            <TooltipContent side="right" sideOffset={6}>
+              {hideEmpty ? 'Show Empty' : 'Hide Empty'}
             </TooltipContent>
           </Tooltip>
 
@@ -240,370 +332,107 @@ export default function SlideNavigator({ slides, currentSlide }: SlideNavigatorP
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7"
+                className="size-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
                 onClick={() => setCollapsed((c) => !c)}
+                aria-label={collapsed ? 'Expand slide navigator' : 'Collapse slide navigator'}
               >
                 {collapsed ? (
-                  <ChevronRight className="size-3.5 text-muted-foreground" />
+                  <ChevronRight className="size-3 text-muted-foreground" />
                 ) : (
-                  <ChevronLeft className="size-3.5 text-muted-foreground" />
+                  <ChevronLeft className="size-3 text-muted-foreground" />
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
-              {collapsed ? '展开侧栏' : '收起侧栏'}
+            <TooltipContent side="right" sideOffset={6}>
+              {collapsed ? 'Expand' : 'Collapse'}
             </TooltipContent>
           </Tooltip>
         </div>
       </div>
 
       {/* ── Slide list ── */}
-      <div className="custom-scrollbar flex-1 min-h-0 overflow-y-auto px-2 py-2">
-        <AnimatePresence mode="popLayout">
-          {slides.map((slide, index) => {
-            const isActive = index === currentSlideIndex;
-            const modCount = getSlideModificationCount(slide);
+      <div className="custom-scrollbar flex-1 min-h-0 overflow-y-auto px-1.5 py-1.5">
+        {slides.length === 0 && !collapsed && (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-500/10 mb-2">
+              <FileText className="size-4 text-emerald-500/50" />
+            </div>
+            <span className="text-[10px] font-medium opacity-70 dark:opacity-80">No slides loaded</span>
+          </div>
+        )}
 
-            // Collapsed: compact number strip
-            if (collapsed) {
+        {collapsed ? (
+          // Collapsed: compact number strip (no drag)
+          <AnimatePresence mode="popLayout">
+            {slides.map((slide, index) => {
+              const isActive = index === currentSlideIndex;
+              const modCount = getSlideModificationCount(slide);
+
               return (
                 <Tooltip key={slide.slideNumber}>
                   <TooltipTrigger asChild>
                     <motion.button
                       layout
-                      whileHover={{ scale: 1.08 }}
+                      whileHover={{ scale: 1.06 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => setCurrentSlide(index)}
+                      aria-label={`Slide ${slide.slideNumber}, ${slide.elements.length} elements`}
                       className={cn(
-                        'relative mb-1 flex size-10 items-center justify-center rounded-lg text-xs font-medium transition-all duration-200',
+                        'relative mb-1 flex size-8 items-center justify-center rounded-md text-[10px] font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30',
                         isActive
-                          ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/25'
-                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                          : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground border border-transparent'
                       )}
                     >
                       {slide.slideNumber}
+                      {/* Dot indicator for modified slides */}
                       {modCount > 0 && (
-                        <span className="absolute -right-0.5 -top-0.5 flex size-3.5 items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold text-white">
-                          {modCount}
-                        </span>
+                        <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 size-1.5 rounded-full bg-amber-500" />
                       )}
                     </motion.button>
                   </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8}>
-                    第 {slide.slideNumber} 页
-                    {modCount > 0 && ` · ${modCount} 处修改`}
+                  <TooltipContent side="right" sideOffset={6}>
+                    Slide {slide.slideNumber} · {slide.elements.length} element{slide.elements.length !== 1 ? 's' : ''}
+                    {modCount > 0 && ` · ${modCount} edits`}
                   </TooltipContent>
                 </Tooltip>
               );
-            }
-
-            // Expanded: compact card row
-            return (
-              <motion.div
-                key={slide.slideNumber}
-                layout
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
-                onClick={() => setCurrentSlide(index)}
-                className={cn(
-                  'group relative mb-1.5 cursor-pointer overflow-hidden rounded-lg border transition-all duration-200',
-                  isActive
-                    ? 'border-primary/60 bg-primary/5 shadow-sm shadow-primary/10'
-                    : 'border-transparent hover:border-border hover:bg-accent/40'
-                )}
-              >
-                {isActive && (
-                  <motion.div
-                    layoutId="slide-accent-bar"
-                    className="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500 to-teal-500"
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  />
-                )}
-
-                <div className="flex items-center gap-2.5 px-2.5 py-2">
-                  {/* Thumbnail */}
-                  <div className="relative w-16 h-9 overflow-hidden rounded bg-muted/50 flex-shrink-0">
-                    {slide.previewImage && !previewErrors.has(slide.slideNumber) ? (
-                      <img
-                        src={slide.previewImage}
-                        alt={`Slide ${slide.slideNumber}`}
-                        className="h-full w-full object-cover"
-                        draggable={false}
-                        onError={() => {
-                          setPreviewErrors(prev => new Set(prev).add(slide.slideNumber));
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-muted/40 to-muted/10">
-                        <FileText className="size-4 text-muted-foreground/20" />
-                      </div>
-                    )}
-                    <div
-                      className={cn(
-                        'absolute bottom-0.5 left-0.5 flex items-center justify-center rounded px-1 py-0 text-[8px] font-semibold backdrop-blur-sm',
-                        isActive
-                          ? 'bg-primary/90 text-primary-foreground'
-                          : 'bg-black/50 text-white'
-                      )}
-                    >
-                      {slide.slideNumber}
-                    </div>
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <span className={cn(
-                      'text-xs font-medium block truncate',
-                      isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'
-                    )}>
-                      第 {slide.slideNumber} 页
-                    </span>
-                    <span className="text-[10px] text-muted-foreground block truncate">
-                      {slide.elements.length} 个元素
-                    </span>
-                  </div>
-
-                  {/* Modification badge */}
-                  {modCount > 0 && (
-                    <Badge className="bg-amber-500 text-white border-0 text-[8px] px-1 py-0 h-4 shrink-0 shadow-sm hover:bg-amber-600">
-                      {modCount}
-                    </Badge>
-                  )}
-                </div>
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
-      </div>
-
-      {/* ── Current Slide Preview (interactive) ── */}
-      {!collapsed && currentSlide && (
-        <div className="flex-shrink-0 border-t border-border/50">
-          <div className="px-2.5 py-2">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <Presentation className="size-3 text-muted-foreground" />
-              <span className="text-[11px] font-semibold text-muted-foreground">实时预览</span>
-              <Badge variant="secondary" className="text-[9px] px-1 py-0 h-3.5 ml-auto">
-                第 {currentSlide.slideNumber} 页
-              </Badge>
-            </div>
-
-            {/* Preview container with aspect ratio */}
-            <div
-              className="relative w-full overflow-hidden rounded-lg border border-border/40 bg-muted/30 shadow-md shadow-black/5 dark:shadow-black/20"
-              style={{ aspectRatio: `${slideW} / ${slideH}` }}
+            })}
+          </AnimatePresence>
+        ) : (
+          // Expanded: draggable slide cards
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={slides.map((s) => `slide-${s.slideNumber}`)}
+              strategy={verticalListSortingStrategy}
             >
-              {/* Background preview image */}
-              {currentSlide.previewImage ? (
-                <img
-                  src={currentSlide.previewImage}
-                  alt={`Slide ${currentSlide.slideNumber} preview`}
-                  className="h-full w-full object-cover select-none"
-                  draggable={false}
-                />
-              ) : (
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    backgroundImage: `
-                      linear-gradient(to right, hsl(var(--border) / 0.25) 1px, transparent 1px),
-                      linear-gradient(to bottom, hsl(var(--border) / 0.25) 1px, transparent 1px)
-                    `,
-                    backgroundSize: '10% 10%',
-                  }}
-                />
-              )}
+              <AnimatePresence mode="popLayout">
+                {slides.map((slide, index) => {
+                  const isActive = index === currentSlideIndex;
+                  const modCount = getSlideModificationCount(slide);
 
-              {/* Decorative (empty) element outlines — very faint, non-interactive */}
-              {decorOverlays.map((el) => {
-                const left = (el.position.x / slideW) * 100;
-                const top = (el.position.y / slideH) * 100;
-                const width = (el.position.width / slideW) * 100;
-                const height = (el.position.height / slideH) * 100;
-                if (width < 0.1 || height < 0.1) return null;
-                return (
-                  <div
-                    key={`decor-${el.id}`}
-                    className="pointer-events-none absolute rounded-[2px]"
-                    style={{
-                      left: `${left}%`,
-                      top: `${top}%`,
-                      width: `${width}%`,
-                      height: `${height}%`,
-                      border: '1px dotted rgba(120, 120, 120, 0.35)',
-                      backgroundColor: 'transparent',
-                      zIndex: 1,
-                    }}
-                    title={`${el.shapeName || '装饰区域'} (不可编辑)`}
-                  />
-                );
-              })}
-
-              {/* Element overlays — interactive, with real-time preview */}
-              {visibleElements.map((el) => {
-                const colors = getElementColors(el.type);
-                const isSelected = selectedElementId === el.id;
-                const isModified = isElementModified(el);
-
-                const left = (el.position.x / slideW) * 100;
-                const top = (el.position.y / slideH) * 100;
-                const width = (el.position.width / slideW) * 100;
-                const height = (el.position.height / slideH) * 100;
-
-                // For image elements with replacement data, show the new image
-                const isImageWithReplacement = el.type === 'image' && (el as PptxImageElement).replacementImageData;
-                const imageUrl = isImageWithReplacement ? buildImageDataUrl(el as PptxImageElement) : null;
-
-                return (
-                  <div
-                    key={el.id}
-                    className={cn(
-                      'group/overlay absolute cursor-pointer transition-all duration-150 ease-out',
-                      'rounded-[2px]',
-                    )}
-                    style={{
-                      left: `${left}%`,
-                      top: `${top}%`,
-                      width: `${width}%`,
-                      height: `${height}%`,
-                      border: isSelected
-                        ? `1.5px solid ${colors.selectedBorder}`
-                        : `1px solid ${colors.border}`,
-                      boxShadow: isSelected
-                        ? `0 0 0 1.5px ${colors.glow}, 0 0 8px ${colors.glow}`
-                        : 'none',
-                      zIndex: isSelected ? 10 : 1,
-                      backgroundColor: isImageWithReplacement && imageUrl
-                        ? 'transparent'
-                        : isSelected
-                        ? colors.bg
-                        : 'transparent',
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      selectElement(el.id);
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      handleDoubleClick(el.id);
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected) {
-                        (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.hoverBg;
-                        (e.currentTarget as HTMLDivElement).style.borderColor = colors.selectedBorder;
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected) {
-                        (e.currentTarget as HTMLDivElement).style.backgroundColor = isImageWithReplacement && imageUrl ? 'transparent' : 'transparent';
-                        (e.currentTarget as HTMLDivElement).style.borderColor = colors.border;
-                      }
-                    }}
-                  >
-                    {/* Show replacement image inside overlay */}
-                    {isImageWithReplacement && imageUrl && (
-                      <img
-                        src={imageUrl}
-                        alt="Replacement"
-                        className="absolute inset-0 w-full h-full object-cover rounded-[1px]"
-                        style={{ opacity: 0.85 }}
-                      />
-                    )}
-
-                    {/* Show text content overlay for text elements when selected or modified */}
-                    {el.type === 'text' && (isSelected || isModified) && (() => {
-                      const textEl = el as PptxTextElement;
-                      const displayText = textEl.currentText ?? textEl.originalText;
-                      if (!displayText) return null;
-                      return (
-                        <div
-                          className="absolute inset-0 overflow-hidden rounded-[1px]"
-                          style={{
-                            backgroundColor: 'rgba(0,0,0,0.6)',
-                            padding: '1px',
-                          }}
-                        >
-                          <span
-                            className="block text-white leading-tight"
-                            style={{
-                              fontSize: '6px',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 3,
-                              WebkitBoxOrient: 'vertical',
-                              wordBreak: 'break-all',
-                            }}
-                          >
-                            {displayText}
-                          </span>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Type indicator dot */}
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute -left-0.5 -top-0.5 flex items-center justify-center',
-                        'rounded-[2px] px-0.5 py-[0.5px] text-[6px] font-semibold leading-none text-white opacity-0',
-                        'transition-opacity duration-100',
-                        isSelected && 'opacity-100',
-                        'group-hover/overlay:opacity-100',
-                      )}
-                      style={{ backgroundColor: colors.dot }}
-                    >
-                      {el.type === 'text' ? 'T' : el.type === 'table' ? '#' : '🖼'}
-                    </span>
-
-                    {/* Modified indicator */}
-                    {isModified && (
-                      <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 items-center justify-center">
-                        <span
-                          className="block h-2 w-2 rounded-full bg-orange-500"
-                          style={{
-                            boxShadow: '0 0 0 1px rgba(255,255,255,0.9), 0 0 4px rgba(249,115,22,0.5)',
-                          }}
-                        />
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* Click on empty area deselects */}
-              <div
-                className="absolute inset-0"
-                style={{ zIndex: 0 }}
-                onClick={() => selectElement(null)}
-              />
-            </div>
-
-            {/* Legend */}
-            <div className="flex items-center justify-center gap-3 text-[9px] text-muted-foreground/80 mt-1.5">
-              <span className="inline-flex items-center gap-1">
-                <span className="block h-2 w-2 rounded-[1px]" style={{ backgroundColor: ELEMENT_COLORS.text.dot }} />
-                文本
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="block h-2 w-2 rounded-[1px]" style={{ backgroundColor: ELEMENT_COLORS.table.dot }} />
-                表格
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="block h-2 w-2 rounded-[1px]" style={{ backgroundColor: ELEMENT_COLORS.image.dot }} />
-                图片
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="block h-2 w-2 rounded-full bg-orange-500" />
-                已修改
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
+                  return (
+                    <SortableSlideCard
+                      key={slide.slideNumber}
+                      slide={slide}
+                      index={index}
+                      isActive={isActive}
+                      modCount={modCount}
+                      previewErrors={previewErrors}
+                      onPreviewError={handlePreviewError}
+                      onClick={() => setCurrentSlide(index)}
+                    />
+                  );
+                })}
+              </AnimatePresence>
+            </SortableContext>
+          </DndContext>
+        )}
+      </div>
 
       {/* ── Footer ── */}
       <AnimatePresence mode="wait">
@@ -613,18 +442,29 @@ export default function SlideNavigator({ slides, currentSlide }: SlideNavigatorP
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="border-t border-border/50 px-3 py-1.5 flex-shrink-0"
+            transition={{ duration: 0.1 }}
+            className="border-t border-border/30 flex-shrink-0"
           >
-            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-              <span>{slides.reduce((sum, slide) => sum + slide.elements.length, 0)} 个元素</span>
+            {/* Modification progress bar */}
+            {totalModifications > 0 && totalElements > 0 && (
+              <div className="mx-2 mt-1">
+                <div className="w-full h-[1px] rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-500"
+                    style={{ width: `${Math.min((totalModifications / totalElements) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="px-2 py-1 flex items-center justify-between text-[9px] text-muted-foreground dark:text-muted-foreground/90">
+              <span>{totalElements} elements</span>
               <span>
                 {totalModifications > 0 ? (
                   <span className="font-medium text-amber-600 dark:text-amber-400">
-                    {totalModifications} 处修改
+                    {totalModifications} edits
                   </span>
                 ) : (
-                  '无修改'
+                  'No edits'
                 )}
               </span>
             </div>

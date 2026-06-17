@@ -10,37 +10,38 @@ import {
   type PptxSlideData,
   usePptxStore,
 } from '@/lib/pptx-store';
+import { EyeOff } from 'lucide-react';
 import { scrollToElement } from '@/components/slide-editor';
 
 // ============================================================================
-// Color scheme — warmer tones
+// Color scheme
 // ============================================================================
 
 const ELEMENT_COLORS = {
   text: {
-    border: 'rgba(20, 184, 166, 0.55)',    // teal-500
-    bg: 'rgba(20, 184, 166, 0.07)',
-    hoverBg: 'rgba(20, 184, 166, 0.13)',
+    border: 'rgba(20, 184, 166, 0.5)',
+    bg: 'rgba(20, 184, 166, 0.06)',
+    hoverBg: 'rgba(20, 184, 166, 0.12)',
     selectedBorder: 'rgb(20, 184, 166)',
-    glow: 'rgba(20, 184, 166, 0.40)',
+    glow: 'rgba(20, 184, 166, 0.35)',
     dot: 'rgb(20, 184, 166)',
     label: 'teal',
   },
   table: {
-    border: 'rgba(16, 185, 129, 0.55)',    // emerald-500
-    bg: 'rgba(16, 185, 129, 0.07)',
-    hoverBg: 'rgba(16, 185, 129, 0.13)',
+    border: 'rgba(16, 185, 129, 0.5)',
+    bg: 'rgba(16, 185, 129, 0.06)',
+    hoverBg: 'rgba(16, 185, 129, 0.12)',
     selectedBorder: 'rgb(16, 185, 129)',
-    glow: 'rgba(16, 185, 129, 0.40)',
+    glow: 'rgba(16, 185, 129, 0.35)',
     dot: 'rgb(16, 185, 129)',
     label: 'emerald',
   },
   image: {
-    border: 'rgba(139, 92, 246, 0.55)',    // violet-500
-    bg: 'rgba(139, 92, 246, 0.07)',
-    hoverBg: 'rgba(139, 92, 246, 0.13)',
+    border: 'rgba(139, 92, 246, 0.5)',
+    bg: 'rgba(139, 92, 246, 0.06)',
+    hoverBg: 'rgba(139, 92, 246, 0.12)',
     selectedBorder: 'rgb(139, 92, 246)',
-    glow: 'rgba(139, 92, 246, 0.40)',
+    glow: 'rgba(139, 92, 246, 0.35)',
     dot: 'rgb(139, 92, 246)',
     label: 'violet',
   },
@@ -57,15 +58,18 @@ function getElementColors(type: ElementTypeKey) {
 // ============================================================================
 
 export function isEmptyElement(el: PptxElement): boolean {
-  // Empty text rectangles
   if (el.type === 'text') {
     const text = (el as PptxTextElement).originalText?.trim() ?? '';
     if (text === '') return true;
+    if (text.length <= 1 && !text.trim()) return true;
   }
 
-  // Empty tables
   if (el.type === 'table') {
-    return el.rows.length === 0;
+    if (el.rows.length === 0) return true;
+    const allEmpty = el.rows.every(row =>
+      row.cells.every(cell => !cell.text?.trim())
+    );
+    if (allEmpty) return true;
   }
 
   return false;
@@ -75,18 +79,6 @@ function hasPosition(el: PptxElement): boolean {
   return el.position.width > 0 && el.position.height > 0;
 }
 
-/**
- * Determine if an element is a "background-style" element that should NOT
- * be rendered as an interactive highlight overlay. Two patterns:
- *
- *  1. Full-bleed (>=90% on both axes) empty/no-replacement elements — these
- *     are full-slide backgrounds (WPS stores them as <p:pic> or empty rects).
- *  2. Large empty text rects (>=10% on each axis AND area >= 5%) — these
- *     are the WPS scientific-template card / panel decorations.
- *
- * The slide preview image already includes these shapes; rendering an
- * overlay on top adds no value and only confuses the user.
- */
 function isBackgroundElement(el: PptxElement, slideW: number, slideH: number): boolean {
   if (el.position.width === 0 || el.position.height === 0) return false;
   const wPct = el.position.width / slideW;
@@ -146,23 +138,25 @@ function isElementModified(el: PptxElement): boolean {
 interface SlidePreviewProps {
   slide: PptxSlideData;
   className?: string;
+  showGridOverlay?: boolean;
 }
 
-export function SlidePreview({ slide, className }: SlidePreviewProps) {
-  const { selectedElementId, selectElement, hideEmpty, slideSize } = usePptxStore();
+export function SlidePreview({ slide, className, showGridOverlay }: SlidePreviewProps) {
+  const { selectedElementId, selectElement, hideEmpty, slideSize, hiddenElementIds } = usePptxStore();
   const [imageError, setImageError] = React.useState(false);
 
   const { width: slideW, height: slideH } = slideSize;
 
-  // Filter visible elements (hideEmpty + drop background-style decorations)
   const visibleElements = (hideEmpty
     ? slide.elements.filter((el) => !isEmptyElement(el))
     : slide.elements
-  ).filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH));
+  ).filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH) && !hiddenElementIds.has(el.id));
 
-  // Decorative overlays: small empty text shapes (WPS template placeholders).
-  // Render as a separate faint dotted layer so the user can see WPS template
-  // placeholder rectangles without confusing them with editable content.
+  const hiddenElements = (hideEmpty
+    ? slide.elements.filter((el) => !isEmptyElement(el))
+    : slide.elements
+  ).filter((el) => hasPosition(el) && !isBackgroundElement(el, slideW, slideH) && hiddenElementIds.has(el.id));
+
   const decorOverlays = slide.elements.filter((el) => {
     if (!hideEmpty) return false;
     if (!isEmptyElement(el)) return false;
@@ -173,15 +167,8 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
     return wPct < 0.5 && hPct < 0.5;
   });
 
-  // Reset error state when slide changes
   React.useEffect(() => {
     setImageError(false);
-    // Debug: log preview image status
-    if (slide.previewImage) {
-      console.log(`[SlidePreview] Slide ${slide.slideNumber}: previewImage exists, length=${slide.previewImage.length}, startsWith=${slide.previewImage.substring(0, 30)}`);
-    } else {
-      console.log(`[SlidePreview] Slide ${slide.slideNumber}: NO previewImage`);
-    }
   }, [slide.slideNumber, slide.previewImage]);
 
   const handleClick = useCallback(
@@ -194,7 +181,6 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
   const handleDoubleClick = useCallback(
     (elementId: string) => {
       selectElement(elementId);
-      // Defer scroll so the store has time to update selectedElementId
       requestAnimationFrame(() => {
         scrollToElement(elementId);
       });
@@ -203,10 +189,10 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
   );
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
+    <div className={cn('flex flex-col gap-1.5', className)}>
       {/* ── Preview container ── */}
       <div
-        className="relative w-full overflow-hidden rounded-xl border border-border/40 bg-muted/30 shadow-lg shadow-black/5 dark:shadow-black/20"
+        className="relative w-full overflow-hidden rounded-lg border border-emerald-200/20 dark:border-emerald-700/15 bg-muted/15"
         style={{ aspectRatio: `${slideW} / ${slideH}` }}
       >
         {/* Preview image or grid fallback */}
@@ -217,7 +203,6 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
             className="h-full w-full object-cover select-none"
             draggable={false}
             onError={() => {
-              console.warn(`Preview image failed to load for slide ${slide.slideNumber}, data length: ${slide.previewImage?.length ?? 0}`);
               setImageError(true);
             }}
             onLoad={() => {
@@ -229,17 +214,15 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
             className="absolute inset-0"
             style={{
               backgroundImage: `
-                linear-gradient(to right, hsl(var(--border) / 0.25) 1px, transparent 1px),
-                linear-gradient(to bottom, hsl(var(--border) / 0.25) 1px, transparent 1px)
+                linear-gradient(to right, hsl(var(--border) / 0.2) 1px, transparent 1px),
+                linear-gradient(to bottom, hsl(var(--border) / 0.2) 1px, transparent 1px)
               `,
               backgroundSize: '10% 10%',
             }}
           />
         )}
 
-        {/* Decorative (empty) element outlines — very faint, non-interactive.
-            Helps the user see WPS template card / panel decorations without
-            confusing them with editable content. */}
+        {/* Decorative (empty) element outlines */}
         {decorOverlays.map((el) => {
           const left = (el.position.x / slideW) * 100;
           const top = (el.position.y / slideH) * 100;
@@ -255,11 +238,11 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
                 top: `${top}%`,
                 width: `${width}%`,
                 height: `${height}%`,
-                border: '1px dotted rgba(120, 120, 120, 0.35)',
-                backgroundColor: 'transparent',
+                border: '1px dashed rgba(16, 185, 129, 0.25)',
+                backgroundColor: 'rgba(16, 185, 129, 0.03)',
                 zIndex: 1,
               }}
-              title={`${el.shapeName || '装饰区域'} (不可编辑)`}
+              title={`${el.shapeName || 'Decorative'} (not editable)`}
             />
           );
         })}
@@ -270,7 +253,6 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
           const isSelected = selectedElementId === el.id;
           const isModified = isElementModified(el);
 
-          // Percentage-based positioning
           const left = (el.position.x / slideW) * 100;
           const top = (el.position.y / slideH) * 100;
           const width = (el.position.width / slideW) * 100;
@@ -280,8 +262,9 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
             <div
               key={el.id}
               className={cn(
-                'group/overlay absolute cursor-pointer transition-all duration-200 ease-out',
-                'rounded-[3px]',
+                'group/overlay absolute cursor-pointer transition-all duration-150 ease-out',
+                'rounded-[2px]',
+                isSelected && 'animate-element-select-pulse',
               )}
               style={{
                 left: `${left}%`,
@@ -293,7 +276,7 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
                   ? `1.5px solid ${colors.selectedBorder}`
                   : `1px solid ${colors.border}`,
                 boxShadow: isSelected
-                  ? `0 0 0 2px ${colors.glow}, 0 0 16px ${colors.glow}, inset 0 0 8px ${colors.bg}`
+                  ? `0 0 0 1.5px ${colors.glow}, 0 0 10px ${colors.glow}`
                   : 'none',
                 zIndex: isSelected ? 10 : 1,
               }}
@@ -322,8 +305,8 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
               <span
                 className={cn(
                   'pointer-events-none absolute -left-0.5 -top-0.5 flex items-center justify-center',
-                  'rounded-[3px] px-1 py-[1px] text-[8px] font-semibold leading-none text-white opacity-0',
-                  'transition-opacity duration-150',
+                  'rounded-[2px] px-0.5 py-[1px] text-[7px] font-semibold leading-none text-white opacity-0',
+                  'transition-opacity duration-100',
                   isSelected && 'opacity-100',
                   'group-hover/overlay:opacity-100',
                 )}
@@ -335,12 +318,12 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
               {/* Modified indicator — orange dot */}
               {isModified && (
                 <span
-                  className="pointer-events-none absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center"
+                  className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-2 w-2 items-center justify-center"
                 >
                   <span
-                    className="block h-2.5 w-2.5 rounded-full bg-orange-500 shadow-sm"
+                    className="block h-2 w-2 rounded-full bg-orange-500 shadow-sm"
                     style={{
-                      boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9), 0 0 6px rgba(249,115,22,0.5)',
+                      boxShadow: '0 0 0 1px rgba(255,255,255,0.9), 0 0 4px rgba(249,115,22,0.4)',
                     }}
                   />
                 </span>
@@ -348,6 +331,95 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
             </div>
           );
         })}
+
+        {/* Hidden element overlays — dashed border, low opacity, no click */}
+        {hiddenElements.map((el) => {
+          const colors = getElementColors(el.type);
+
+          const left = (el.position.x / slideW) * 100;
+          const top = (el.position.y / slideH) * 100;
+          const width = (el.position.width / slideW) * 100;
+          const height = (el.position.height / slideH) * 100;
+
+          if (width < 0.1 || height < 0.1) return null;
+
+          return (
+            <div
+              key={`hidden-${el.id}`}
+              className="pointer-events-none absolute rounded-[2px] opacity-20"
+              style={{
+                left: `${left}%`,
+                top: `${top}%`,
+                width: `${width}%`,
+                height: `${height}%`,
+                border: `1px dashed ${colors.border}`,
+                backgroundColor: 'transparent',
+                zIndex: 0,
+              }}
+            >
+              {/* Hidden indicator — eye-off icon in corner */}
+              <span
+                className="pointer-events-none absolute -right-0.5 -top-0.5 flex items-center justify-center rounded-[2px] bg-amber-500/80 px-0.5 py-[1px]"
+              >
+                <EyeOff className="size-[7px] text-white" />
+              </span>
+            </div>
+          );
+        })}
+
+        {/* Grid overlay */}
+        {showGridOverlay && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ zIndex: 5 }}
+          >
+            {/* Vertical lines every 10% */}
+            {Array.from({ length: 9 }, (_, i) => i + 1).map((pct) => (
+              <div
+                key={`v-${pct}`}
+                className="absolute top-0 bottom-0"
+                style={{
+                  left: `${pct * 10}%`,
+                  width: 0,
+                  borderLeft: pct === 5
+                    ? '1px solid rgba(16, 185, 129, 0.3)'
+                    : '1px solid rgba(16, 185, 129, 0.15)',
+                }}
+              />
+            ))}
+            {/* Horizontal lines every 10% */}
+            {Array.from({ length: 9 }, (_, i) => i + 1).map((pct) => (
+              <div
+                key={`h-${pct}`}
+                className="absolute left-0 right-0"
+                style={{
+                  top: `${pct * 10}%`,
+                  height: 0,
+                  borderTop: pct === 5
+                    ? '1px solid rgba(16, 185, 129, 0.3)'
+                    : '1px solid rgba(16, 185, 129, 0.15)',
+                }}
+              />
+            ))}
+            {/* Dot indicators at grid intersections */}
+            {Array.from({ length: 9 }, (_, vi) => vi + 1).flatMap((vpct) =>
+              Array.from({ length: 9 }, (_, hi) => hi + 1).map((hpct) => (
+                <div
+                  key={`d-${vpct}-${hpct}`}
+                  className="absolute"
+                  style={{
+                    left: `${vpct * 10}%`,
+                    top: `${hpct * 10}%`,
+                    width: 1,
+                    height: 1,
+                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                    transform: 'translate(-0.5px, -0.5px)',
+                  }}
+                />
+              ))
+            )}
+          </div>
+        )}
 
         {/* Click on empty area deselects */}
         <div
@@ -358,11 +430,11 @@ export function SlidePreview({ slide, className }: SlidePreviewProps) {
       </div>
 
       {/* ── Legend ── */}
-      <div className="flex items-center justify-center gap-5 text-[11px] text-muted-foreground/80 bg-muted/20 rounded-lg py-1.5 px-3">
-        <LegendItem color={ELEMENT_COLORS.text.dot} label="文本" />
-        <LegendItem color={ELEMENT_COLORS.table.dot} label="表格" />
-        <LegendItem color={ELEMENT_COLORS.image.dot} label="图片" />
-        <LegendItem color="rgb(249, 115, 22)" label="已修改" dotStyle="ring" />
+      <div className="flex items-center justify-center gap-4 text-[9px] text-muted-foreground/70">
+        <LegendItem color={ELEMENT_COLORS.text.dot} label="Text" />
+        <LegendItem color={ELEMENT_COLORS.table.dot} label="Table" />
+        <LegendItem color={ELEMENT_COLORS.image.dot} label="Image" />
+        <LegendItem color="rgb(249, 115, 22)" label="Modified" dotStyle="ring" />
       </div>
     </div>
   );
@@ -382,18 +454,18 @@ function LegendItem({
   dotStyle?: 'solid' | 'ring';
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1">
       {dotStyle === 'solid' ? (
         <span
-          className="block h-2.5 w-2.5 rounded-[2px]"
+          className="block h-2 w-2 rounded-[1px]"
           style={{ backgroundColor: color }}
         />
       ) : (
         <span
-          className="block h-2.5 w-2.5 rounded-full"
+          className="block h-2 w-2 rounded-full"
           style={{
             backgroundColor: color,
-            boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9)',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
           }}
         />
       )}

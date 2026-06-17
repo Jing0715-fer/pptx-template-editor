@@ -138,6 +138,10 @@ export interface PptxJsonData {
 
 type AppStep = 'upload' | 'loading' | 'editing';
 
+const MAX_HISTORY = 50;
+
+type HistoryEntry = { slides: PptxSlideData[] };
+
 interface PptxStore {
   step: AppStep;
   fileId: string | null;
@@ -147,6 +151,12 @@ interface PptxStore {
   currentSlideIndex: number;
   selectedElementId: string | null;
   hideEmpty: boolean;
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
+  slideNotes: Record<number, string>;
+  hiddenElementIds: Set<string>;
+  elementComments: Record<string, string>;
+  batchSelectedIds: Set<string>;
 
   setStep: (step: AppStep) => void;
   setParsedData: (fileId: string, fileName: string, slides: PptxSlideData[], slideSize?: SlideSize) => void;
@@ -163,8 +173,26 @@ interface PptxStore {
   resetAllModifications: () => void;
   toggleHideEmpty: () => void;
   updateSlidePreviews: (previewImages: (string | null)[]) => void;
+  reorderElements: (slideIndex: number, oldIndex: number, newIndex: number) => void;
+  reorderSlides: (oldIndex: number, newIndex: number) => void;
   applyAiModifications: (modifications: { slideIndex: number; elementIndex: number; type: 'text' | 'table'; newText?: string; tableCells?: { row: number; col: number; text: string }[] }[]) => void;
+  updateSlideNote: (slideNumber: number, note: string) => void;
+  updateElementComment: (elementId: string, comment: string) => void;
+  duplicateTextElement: (elementId: string) => void;
+  toggleElementVisibility: (id: string) => void;
+  isElementHidden: (id: string) => boolean;
+  toggleBatchSelect: (elementId: string) => void;
+  clearBatchSelection: () => void;
+  batchSelectAll: (elementIds: string[]) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
   reset: () => void;
+}
+
+function cloneSlides(slides: PptxSlideData[]): PptxSlideData[] {
+  return JSON.parse(JSON.stringify(slides));
 }
 
 export const usePptxStore = create<PptxStore>((set, get) => ({
@@ -176,67 +204,93 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
   currentSlideIndex: 0,
   selectedElementId: null,
   hideEmpty: true,
+  undoStack: [],
+  redoStack: [],
+  slideNotes: {},
+  hiddenElementIds: new Set<string>(),
+  elementComments: {},
+  batchSelectedIds: new Set<string>(),
 
   setStep: (step) => set({ step }),
 
   setParsedData: (fileId, fileName, slides, slideSize) =>
-    set({ fileId, fileName, slides, slideSize: slideSize || { width: 12192000, height: 6858000 }, currentSlideIndex: 0, selectedElementId: null, step: 'editing' }),
+    set({ fileId, fileName, slides, slideSize: slideSize || { width: 12192000, height: 6858000 }, currentSlideIndex: 0, selectedElementId: null, step: 'editing', undoStack: [], redoStack: [] }),
 
-  setCurrentSlide: (index) => set({ currentSlideIndex: index, selectedElementId: null }),
+  setCurrentSlide: (index) => set({ currentSlideIndex: index, selectedElementId: null, hiddenElementIds: new Set<string>(), batchSelectedIds: new Set<string>() }),
   selectElement: (id) => set({ selectedElementId: id }),
 
   updateText: (elementId, newText) =>
-    set((state) => ({
-      slides: state.slides.map((slide) => ({
-        ...slide,
-        elements: slide.elements.map((el) =>
-          el.id === elementId && el.type === 'text' ? { ...el, currentText: newText } : el
-        ),
-      })),
-    })),
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: state.slides.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((el) =>
+            el.id === elementId && el.type === 'text' ? { ...el, currentText: newText } : el
+          ),
+        })),
+      };
+    }),
 
   updateTableCell: (elementId, row, col, text) =>
-    set((state) => ({
-      slides: state.slides.map((slide) => ({
-        ...slide,
-        elements: slide.elements.map((el) => {
-          if (el.id === elementId && el.type === 'table') {
-            const currentRows = el.currentRows || el.rows.map((r) => ({
-              ...r, cells: r.cells.map((c) => ({ ...c })),
-            }));
-            const newRows = currentRows.map((r, ri) =>
-              ri === row ? { ...r, cells: r.cells.map((c, ci) => ci === col ? { ...c, text } : c) } : r
-            );
-            return { ...el, currentRows: newRows };
-          }
-          return el;
-        }),
-      })),
-    })),
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: state.slides.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((el) => {
+            if (el.id === elementId && el.type === 'table') {
+              const currentRows = el.currentRows || el.rows.map((r) => ({
+                ...r, cells: r.cells.map((c) => ({ ...c })),
+              }));
+              const newRows = currentRows.map((r, ri) =>
+                ri === row ? { ...r, cells: r.cells.map((c, ci) => ci === col ? { ...c, text } : c) } : r
+              );
+              return { ...el, currentRows: newRows };
+            }
+            return el;
+          }),
+        })),
+      };
+    }),
 
   updateImage: (elementId, imageData, imageType) =>
-    set((state) => ({
-      slides: state.slides.map((slide) => ({
-        ...slide,
-        elements: slide.elements.map((el) =>
-          el.id === elementId && el.type === 'image'
-            ? { ...el, replacementImageData: imageData, replacementImageType: imageType }
-            : el
-        ),
-      })),
-    })),
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: state.slides.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((el) =>
+            el.id === elementId && el.type === 'image'
+              ? { ...el, replacementImageData: imageData, replacementImageType: imageType }
+              : el
+          ),
+        })),
+      };
+    }),
 
   removeImage: (elementId) =>
-    set((state) => ({
-      slides: state.slides.map((slide) => ({
-        ...slide,
-        elements: slide.elements.map((el) =>
-          el.id === elementId && el.type === 'image'
-            ? { ...el, replacementImageData: null, replacementImageType: null }
-            : el
-        ),
-      })),
-    })),
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: state.slides.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((el) =>
+            el.id === elementId && el.type === 'image'
+              ? { ...el, replacementImageData: null, replacementImageType: null }
+              : el
+          ),
+        })),
+      };
+    }),
 
   getModifications: () => {
     const { slides } = get();
@@ -328,18 +382,23 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
   },
 
   resetAllModifications: () =>
-    set((state) => ({
-      slides: state.slides.map((slide) => ({
-        ...slide,
-        elements: slide.elements.map((el) => {
-          if (el.type === 'text' && el.currentText !== undefined) return { ...el, currentText: undefined };
-          if (el.type === 'table' && el.currentRows !== undefined) return { ...el, currentRows: undefined };
-          if (el.type === 'image' && el.replacementImageData !== undefined) return { ...el, replacementImageData: null, replacementImageType: null };
-          return el;
-        }),
-      })),
-      selectedElementId: null,
-    })),
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: state.slides.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((el) => {
+            if (el.type === 'text' && el.currentText !== undefined) return { ...el, currentText: undefined };
+            if (el.type === 'table' && el.currentRows !== undefined) return { ...el, currentRows: undefined };
+            if (el.type === 'image' && el.replacementImageData !== undefined) return { ...el, replacementImageData: null, replacementImageType: null };
+            return el;
+          }),
+        })),
+        selectedElementId: null,
+      };
+    }),
 
   toggleHideEmpty: () => set((state) => ({ hideEmpty: !state.hideEmpty })),
 
@@ -348,8 +407,51 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
       slides: state.slides.map((slide, index) => ({ ...slide, previewImage: previewImages[index] || null })),
     })),
 
+  reorderElements: (slideIndex, oldIndex, newIndex) =>
+    set((state) => {
+      if (oldIndex === newIndex) return state;
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      const updatedSlides = state.slides.map((slide, si) => {
+        if (si !== slideIndex) return slide;
+        const elements = [...slide.elements];
+        const [moved] = elements.splice(oldIndex, 1);
+        elements.splice(newIndex, 0, moved);
+        return { ...slide, elements };
+      });
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: updatedSlides,
+      };
+    }),
+
+  reorderSlides: (oldIndex, newIndex) =>
+    set((state) => {
+      if (oldIndex === newIndex || oldIndex < 0 || newIndex < 0 || oldIndex >= state.slides.length || newIndex >= state.slides.length) return state;
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      const slides = [...state.slides];
+      const [moved] = slides.splice(oldIndex, 1);
+      slides.splice(newIndex, 0, moved);
+      // Update currentSlideIndex if the current slide was moved
+      let currentSlideIndex = state.currentSlideIndex;
+      if (currentSlideIndex === oldIndex) {
+        currentSlideIndex = newIndex;
+      } else if (oldIndex < currentSlideIndex && newIndex >= currentSlideIndex) {
+        currentSlideIndex--;
+      } else if (oldIndex > currentSlideIndex && newIndex <= currentSlideIndex) {
+        currentSlideIndex++;
+      }
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides,
+        currentSlideIndex,
+      };
+    }),
+
   applyAiModifications: (modifications) =>
     set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
       const updatedSlides = state.slides.map((slide) => ({
         ...slide,
         elements: slide.elements.map((el) => {
@@ -372,12 +474,115 @@ export const usePptxStore = create<PptxStore>((set, get) => ({
           return el;
         }),
       }));
-      return { slides: updatedSlides, selectedElementId: null };
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: updatedSlides,
+        selectedElementId: null,
+      };
     }),
+
+  undo: () => {
+    const { undoStack } = get();
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    const redoEntry = { slides: cloneSlides(get().slides) };
+    set({
+      slides: previous.slides,
+      undoStack: undoStack.slice(0, -1),
+      redoStack: [...get().redoStack, redoEntry],
+      selectedElementId: null,
+    });
+  },
+
+  redo: () => {
+    const { redoStack } = get();
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    const undoEntry = { slides: cloneSlides(get().slides) };
+    set({
+      slides: next.slides,
+      undoStack: [...get().undoStack, undoEntry],
+      redoStack: redoStack.slice(0, -1),
+      selectedElementId: null,
+    });
+  },
+
+  updateSlideNote: (slideNumber, note) =>
+    set((state) => ({
+      slideNotes: { ...state.slideNotes, [slideNumber]: note },
+    })),
+
+  updateElementComment: (elementId, comment) =>
+    set((state) => {
+      const updated = { ...state.elementComments };
+      if (comment.trim() === '') {
+        delete updated[elementId];
+      } else {
+        updated[elementId] = comment;
+      }
+      return { elementComments: updated };
+    }),
+
+  duplicateTextElement: (elementId) =>
+    set((state) => {
+      const undoEntry = { slides: cloneSlides(state.slides) };
+      const updatedSlides = state.slides.map((slide) => {
+        const elIndex = slide.elements.findIndex((el) => el.id === elementId && el.type === 'text');
+        if (elIndex === -1) return slide;
+        const original = slide.elements[elIndex] as PptxTextElement;
+        const copy: PptxTextElement = {
+          ...original,
+          id: `${original.id}-copy`,
+          currentText: original.currentText ?? original.originalText,
+        };
+        const elements = [...slide.elements];
+        elements.splice(elIndex + 1, 0, copy);
+        return { ...slide, elements };
+      });
+      return {
+        undoStack: [...state.undoStack.slice(-(MAX_HISTORY - 1)), undoEntry],
+        redoStack: [],
+        slides: updatedSlides,
+      };
+    }),
+
+  toggleElementVisibility: (id) =>
+    set((state) => {
+      const newSet = new Set(state.hiddenElementIds);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return { hiddenElementIds: newSet };
+    }),
+
+  isElementHidden: (id) => get().hiddenElementIds.has(id),
+
+  toggleBatchSelect: (elementId) =>
+    set((state) => {
+      const newSet = new Set(state.batchSelectedIds);
+      if (newSet.has(elementId)) {
+        newSet.delete(elementId);
+      } else {
+        newSet.add(elementId);
+      }
+      return { batchSelectedIds: newSet };
+    }),
+
+  clearBatchSelection: () => set({ batchSelectedIds: new Set<string>() }),
+
+  batchSelectAll: (elementIds) => set({ batchSelectedIds: new Set(elementIds) }),
+
+  canUndo: () => get().undoStack.length > 0,
+  canRedo: () => get().redoStack.length > 0,
 
   reset: () => set({
     step: 'upload', fileId: null, fileName: null, slides: [],
     slideSize: { width: 12192000, height: 6858000 },
     currentSlideIndex: 0, selectedElementId: null, hideEmpty: true,
+    undoStack: [], redoStack: [], slideNotes: {}, hiddenElementIds: new Set<string>(), elementComments: {},
+    batchSelectedIds: new Set<string>(),
   }),
 }));
